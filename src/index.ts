@@ -164,7 +164,9 @@ async function handleMapRequest(
     }
 
     try {
-      const [rows] = await connection.execute<StorageRow[]>(
+      // Use connection.query (text protocol with client-side parameter escaping)
+      // because Cloudflare Hyperdrive does not support MySQL prepared statements (.execute).
+      const [rows] = await connection.query<StorageRow[]>(
         `SELECT d.data, c.\`key\` AS compression_key
          FROM bluemap_grid_storage_data d
          INNER JOIN bluemap_map m ON d.map = m.id
@@ -209,7 +211,7 @@ async function handleMapRequest(
     }
 
     try {
-      const [rows] = await connection.execute<StorageRow[]>(
+      const [rows] = await connection.query<StorageRow[]>(
         `SELECT d.data, c.\`key\` AS compression_key
          FROM bluemap_item_storage_data d
          INNER JOIN bluemap_map m ON d.map = m.id

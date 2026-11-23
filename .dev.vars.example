@@ -1,0 +1,8 @@
+# Copy to .dev.vars (gitignored, chmod 600) for local development.
+# Production credentials should be configured in Cloudflare Hyperdrive / Wrangler secrets.
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DATABASE=bluemap
+MYSQL_USER=bluemap_ro
+MYSQL_PASSWORD=replace-me
+CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=mysql://bluemap_ro:replace-me@127.0.0.1:3306/bluemap

@@ -96,10 +96,11 @@
     const paramCrt = params.get("crt");
 
     let savedScheme = "standard";
-    let savedCrt = false;
+    let savedCrt = true;
     try {
       savedScheme = localStorage.getItem(STORAGE_SCHEME_KEY) || "standard";
-      savedCrt = localStorage.getItem(STORAGE_CRT_KEY) === "true";
+      const storedCrt = localStorage.getItem(STORAGE_CRT_KEY);
+      savedCrt = storedCrt === null ? true : storedCrt === "true";
     } catch {
       // ignore
     }

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-scheme="standard">
+<html lang="en" data-scheme="standard" data-crt="true">
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1">
@@ -28,7 +28,8 @@
               const s = p.get("scheme") || localStorage.getItem("pp98-bluemap:scheme");
               if (s) document.documentElement.setAttribute("data-scheme", s);
               const c = p.get("crt") ?? localStorage.getItem("pp98-bluemap:crt");
-              if (c === "true" || c === "1") document.documentElement.setAttribute("data-crt", "true");
+              if (c === "false" || c === "0") document.documentElement.setAttribute("data-crt", "false");
+              else document.documentElement.setAttribute("data-crt", "true");
             } catch {}
           })();
         </script>

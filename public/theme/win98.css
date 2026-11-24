@@ -196,21 +196,48 @@
   display: none !important;
 }
 
-/* Optional CRT scanlines synced with Pants Place 98 */
+/* Strong retro CRT scanlines, aperture grille & tube vignette (ON by default) */
+:root[data-crt="true"] #map-container {
+  filter: contrast(1.06) saturate(1.12);
+}
+
+:root[data-crt="true"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    rgba(0, 0, 0, 0.22) 82%,
+    rgba(0, 0, 0, 0.5) 100%
+  );
+  box-shadow: inset 0 0 36px rgba(0, 0, 0, 0.45);
+}
+
 :root[data-crt="true"] body::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 99999;
   pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.16) 0px,
-    rgba(0, 0, 0, 0.16) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-  mix-blend-mode: multiply;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.34) 0px,
+      rgba(0, 0, 0, 0.34) 1px,
+      rgba(255, 255, 255, 0.04) 1px,
+      transparent 2px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      to right,
+      rgba(255, 0, 0, 0.04) 0px,
+      rgba(0, 255, 0, 0.04) 1px,
+      rgba(0, 120, 255, 0.04) 2px,
+      transparent 3px
+    );
 }
 
 /* --- Base Reset --- */

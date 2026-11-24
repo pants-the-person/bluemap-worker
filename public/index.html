@@ -20,6 +20,41 @@
         <title>BlueMap 98 — mc.pants.place</title>
         <script>
           (() => {
+            const makeMemStorage = () => {
+              const map = new Map();
+              return {
+                get length() { return map.size; },
+                key(i) { return Array.from(map.keys())[i] ?? null; },
+                getItem(k) { return map.has(String(k)) ? map.get(String(k)) : null; },
+                setItem(k, v) { map.set(String(k), String(v)); },
+                removeItem(k) { map.delete(String(k)); },
+                clear() { map.clear(); },
+              };
+            };
+            for (const name of ["localStorage", "sessionStorage"]) {
+              try {
+                const s = window[name];
+                const k = "__pp98_probe__";
+                s.setItem(k, "1");
+                s.getItem(k);
+                s.removeItem(k);
+              } catch {
+                try {
+                  Object.defineProperty(window, name, {
+                    configurable: true,
+                    enumerable: true,
+                    value: makeMemStorage(),
+                  });
+                } catch {}
+              }
+            }
+            try {
+              const origReplace = history.replaceState.bind(history);
+              history.replaceState = (...args) => {
+                try { return origReplace(...args); } catch {}
+              };
+            } catch {}
+
             const p = new URLSearchParams(location.search);
             const embed = p.get("embed") === "1" || p.get("embed") === "true" ||
               (p.get("embed") !== "0" && p.get("embed") !== "false" && (() => { try { return self !== top; } catch { return true; } })());

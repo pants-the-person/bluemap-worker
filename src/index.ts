@@ -79,7 +79,8 @@ const LIVE_EDGE_TTL = 300; // 5 minutes in Cloudflare edge cache
 const HDR_CONTENT_TYPE = "X-BlueMap-Content-Type";
 const HDR_ENCODING = "X-BlueMap-Encoding";
 const HDR_CLIENT_CC = "X-BlueMap-Cache-Control";
-const CACHE_KEY_VERSION = "4";
+const HDR_ETAG = "X-BlueMap-ETag";
+const CACHE_KEY_VERSION = "5";
 
 const TILE_PATH_REGEX = /^tiles\/([\d/]+)\/x(-?[\d/]+)z(-?[\d/]+)(?:[./].*)?$/;
 
@@ -111,12 +112,30 @@ function clientAcceptsEncoding(request: Request, encoding: string): boolean {
     .some((part) => part.trim().toLowerCase().split(";")[0] === encoding);
 }
 
+async function computeEtag(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = Array.from(new Uint8Array(digest).subarray(0, 8))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return `W/"${hex}"`;
+}
+
+function etagMatches(request: Request, etag: string | null): boolean {
+  if (!etag) return false;
+  const inm = request.headers.get("If-None-Match");
+  if (!inm) return false;
+  if (inm.trim() === "*") return true;
+  const normalizedTarget = etag.replace(/^W\//, "");
+  return inm.split(",").some((part) => part.trim().replace(/^W\//, "") === normalizedTarget);
+}
+
 function buildClientResponse(
   body: ReadableStream<Uint8Array> | Uint8Array | null,
   contentType: string,
   encoding: string | null,
   cacheControl: string,
   cacheStatus: "HIT" | "MISS" | "BYPASS",
+  etag: string | null,
   request: Request,
 ): Response {
   const isHead = request.method === "HEAD";
@@ -124,6 +143,20 @@ function buildClientResponse(
     "Content-Type": contentType,
     "X-BlueMap-Cache": cacheStatus,
   });
+
+  if (etag) {
+    headers.set("ETag", etag);
+  }
+
+  if (etagMatches(request, etag)) {
+    headers.set("Cache-Control", encoding ? `${cacheControl}, no-transform` : cacheControl);
+    if (encoding) headers.set("Vary", "Accept-Encoding");
+    // Drain/cancel unused body stream if present
+    if (body instanceof ReadableStream) {
+      body.cancel().catch(() => {});
+    }
+    return new Response(null, { status: 304, headers });
+  }
 
   if (encoding) {
     headers.set("Vary", "Accept-Encoding");
@@ -173,12 +206,14 @@ function buildCacheEntry(
   encoding: string | null,
   clientCacheControl: string,
   edgeTtlSeconds: number,
+  etag: string,
 ): Response {
   const headers = new Headers({
     "Content-Type": "application/octet-stream",
     "Cache-Control": `public, max-age=${edgeTtlSeconds}, no-transform`,
     [HDR_CONTENT_TYPE]: contentType,
     [HDR_CLIENT_CC]: clientCacheControl,
+    [HDR_ETAG]: etag,
   });
   if (encoding) {
     headers.set(HDR_ENCODING, encoding);
@@ -228,7 +263,7 @@ async function handleMapRequest(
   const cache = caches.default;
   const cacheKey = makeEdgeCacheKey(url);
 
-  // Serve heavy tiles/textures/settings/assets from Cloudflare edge cache on HIT
+  // Serve heavy tiles/textures/settings/assets/live files from Cloudflare edge cache on HIT
   if (cacheKey) {
     const cached = await cache.match(cacheKey);
     if (cached) {
@@ -236,12 +271,14 @@ async function handleMapRequest(
       const encoding = cached.headers.get(HDR_ENCODING);
       const clientCacheControl =
         cached.headers.get(HDR_CLIENT_CC) ?? TILE_CLIENT_CACHE_CONTROL;
+      const etag = cached.headers.get(HDR_ETAG);
       return buildClientResponse(
         cached.body,
         contentType,
         encoding,
         clientCacheControl,
         "HIT",
+        etag,
         request,
       );
     }
@@ -293,6 +330,7 @@ async function handleMapRequest(
         const bytes = new Uint8Array(rows[0].data);
         const contentType = lod === 0 ? "application/octet-stream" : "image/png";
         const encoding = COMPRESSION_HEADER_MAP[rows[0].compression_key] ?? null;
+        const etag = await computeEtag(bytes);
 
         if (cacheKey && !isHead) {
           ctx.waitUntil(
@@ -304,6 +342,7 @@ async function handleMapRequest(
                 encoding,
                 TILE_CLIENT_CACHE_CONTROL,
                 TILE_EDGE_TTL,
+                etag,
               ),
             ),
           );
@@ -315,6 +354,7 @@ async function handleMapRequest(
           encoding,
           TILE_CLIENT_CACHE_CONTROL,
           cacheKey ? "MISS" : "BYPASS",
+          etag,
           request,
         );
       }
@@ -365,6 +405,7 @@ async function handleMapRequest(
         const bytes = new Uint8Array(rows[0].data);
         const contentType = getMimeType(mapPath);
         const encoding = COMPRESSION_HEADER_MAP[rows[0].compression_key] ?? null;
+        const etag = await computeEtag(bytes);
         const isMapSettings = mapPath === "settings.json";
         const cacheControl = isLive
           ? LIVE_CLIENT_CACHE_CONTROL
@@ -381,7 +422,7 @@ async function handleMapRequest(
           ctx.waitUntil(
             cache.put(
               cacheKey,
-              buildCacheEntry(bytes, contentType, encoding, cacheControl, edgeTtl),
+              buildCacheEntry(bytes, contentType, encoding, cacheControl, edgeTtl, etag),
             ),
           );
         }
@@ -392,6 +433,7 @@ async function handleMapRequest(
           encoding,
           cacheControl,
           cacheKey ? "MISS" : "BYPASS",
+          etag,
           request,
         );
       }

@@ -458,20 +458,18 @@
     };
 
     // Adaptive backoff polling for live/players.json & live/markers.json.
-    // Replaces BlueMap's default 1s player poll and 10s marker poll so idle tabs
-    // back off smoothly up to once every 6 hours and pause while hidden.
+    // Permanently disables BlueMap's 1s player poll and 10s marker poll (including
+    // any already-in-flight update() promises) so idle tabs poll at 5m and back off
+    // smoothly up to once every 6 hours, pausing completely while hidden.
     const EMPTY_BACKOFF_MS = [
-      60 * 1000,         // empty #1: 1m
-      60 * 1000,         // empty #2: 1m
-      60 * 1000,         // empty #3: 1m
-      5 * 60 * 1000,     // empty #4: 5m
-      15 * 60 * 1000,    // empty #5: 15m
-      30 * 60 * 1000,    // empty #6: 30m
-      60 * 60 * 1000,    // empty #7: 1h
-      3 * 60 * 60 * 1000, // empty #8: 3h
-      6 * 60 * 60 * 1000, // empty #9+: 6h (max)
+      5 * 60 * 1000,      // empty #1: 5m
+      15 * 60 * 1000,     // empty #2: 15m
+      30 * 60 * 1000,     // empty #3: 30m
+      60 * 60 * 1000,     // empty #4: 1h
+      3 * 60 * 60 * 1000, // empty #5: 3h
+      6 * 60 * 60 * 1000, // empty #6+: 6h (max)
     ];
-    const ACTIVE_PLAYER_POLL_MS = 60 * 1000;       // 1m when players are online
+    const ACTIVE_PLAYER_POLL_MS = 5 * 60 * 1000;   // 5m when players are online
     const MIN_MARKER_POLL_MS = 5 * 60 * 1000;      // 5m minimum for markers.json
 
     let emptyStreak = 0;
@@ -527,7 +525,6 @@
       const bm = window.bluemap;
       const mgr = bm?.playerMarkerManager;
       if (!mgr || mgr.disposed) return;
-      mgr.setAutoUpdateInterval(0);
       try {
         await mgr.update();
       } catch {
@@ -542,7 +539,6 @@
       const bm = window.bluemap;
       const mgr = bm?.markerFileManager;
       if (!mgr || mgr.disposed) return;
-      mgr.setAutoUpdateInterval(0);
       try {
         await mgr.update();
       } catch {
@@ -558,21 +554,54 @@
 
     window.__pp98RefreshLive = refreshLiveNow;
 
-    function attachAdaptivePolling() {
+    function disableBuiltInAutoUpdate(mgr) {
+      if (!mgr) return;
+      // Walk up prototype chain to neuter MarkerManager.prototype.setAutoUpdateInterval
+      // so neither current nor future managers can ever arm 1s / 10s timers.
+      let proto = Object.getPrototypeOf(mgr);
+      while (proto && proto !== Object.prototype) {
+        if (Object.prototype.hasOwnProperty.call(proto, "setAutoUpdateInterval")) {
+          if (!proto.__pp98Neutered) {
+            proto.setAutoUpdateInterval = function () {
+              if (this._updateInterval) {
+                clearTimeout(this._updateInterval);
+                this._updateInterval = null;
+              }
+            };
+            proto.__pp98Neutered = true;
+          }
+          break;
+        }
+        proto = Object.getPrototypeOf(proto);
+      }
+      if (mgr._updateInterval) {
+        clearTimeout(mgr._updateInterval);
+        mgr._updateInterval = null;
+      }
+    }
+
+    async function attachAdaptivePolling() {
       const bm = window.bluemap;
       if (!bm || bm.__pp98AdaptivePolling) return;
       bm.__pp98AdaptivePolling = true;
 
-      // Stop BlueMap's default 1s & 10s timers immediately
-      bm.playerMarkerManager?.setAutoUpdateInterval?.(0);
-      bm.markerFileManager?.setAutoUpdateInterval?.(0);
+      // 1. Neuter MarkerManager.prototype.setAutoUpdateInterval globally
+      disableBuiltInAutoUpdate(bm.playerMarkerManager);
+      disableBuiltInAutoUpdate(bm.markerFileManager);
 
-      // Wrap map-switch initializers so switching dimensions keeps adaptive backoff
+      // 2. Dispose any existing managers to set `disposed = true`, permanently
+      //    killing any in-flight `update().then(...)` 1s/10s loops started before win98.js loaded.
+      const hadPlayers = Boolean(bm.playerMarkerManager);
+      const hadMarkers = Boolean(bm.markerFileManager);
+      bm.playerMarkerManager?.dispose?.();
+      bm.markerFileManager?.dispose?.();
+
+      // 3. Wrap map-switch initializers so switching dimensions stays on adaptive polling
       const origInitPlayers = bm.initPlayerMarkerManager?.bind(bm);
       if (origInitPlayers) {
         bm.initPlayerMarkerManager = async (...args) => {
           const res = await origInitPlayers(...args);
-          bm.playerMarkerManager?.setAutoUpdateInterval?.(0);
+          disableBuiltInAutoUpdate(bm.playerMarkerManager);
           emptyStreak = 0;
           const nextDelay = computeNextInterval(getPlayerCount());
           schedulePlayerPoll(nextDelay);
@@ -584,18 +613,25 @@
       if (origInitMarkers) {
         bm.initMarkerFileManager = async (...args) => {
           const res = await origInitMarkers(...args);
-          bm.markerFileManager?.setAutoUpdateInterval?.(0);
+          disableBuiltInAutoUpdate(bm.markerFileManager);
           scheduleMarkerPoll(currentIntervalMs);
           return res;
         };
       }
 
-      // Start initial backoff schedule based on the already-completed initial load
-      const firstDelay = computeNextInterval(getPlayerCount());
-      schedulePlayerPoll(firstDelay);
-      scheduleMarkerPoll(firstDelay);
+      // 4. Re-initialize fresh (timer-free) managers for the currently loaded map
+      if (hadPlayers && bm.initPlayerMarkerManager) {
+        await bm.initPlayerMarkerManager();
+      } else {
+        schedulePlayerPoll(computeNextInterval(getPlayerCount()));
+      }
+      if (hadMarkers && bm.initMarkerFileManager) {
+        await bm.initMarkerFileManager();
+      } else {
+        scheduleMarkerPoll(currentIntervalMs);
+      }
 
-      // Resume deferred polls when returning to a hidden tab
+      // 5. Resume deferred polls only when returning to a hidden tab
       document.addEventListener("visibilitychange", () => {
         if (document.hidden) return;
         const now = Date.now();

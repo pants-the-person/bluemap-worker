@@ -19,7 +19,7 @@
     "world_the_end"
   ],
   "scripts": [
-    "theme/win98.js"
+    "theme/win98.js?v=2"
   ],
   "styles": []
 }

@@ -18,6 +18,8 @@
     "world_the_nether",
     "world_the_end"
   ],
-  "scripts": [],
+  "scripts": [
+    "theme/win98.js"
+  ],
   "styles": []
 }

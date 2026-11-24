@@ -196,16 +196,17 @@
   display: none !important;
 }
 
-/* Strong retro CRT scanlines, aperture grille & tube vignette (ON by default) */
-:root[data-crt="true"] #map-container {
+/* Strong retro CRT scanlines, aperture grille & tube vignette scoped strictly
+   to the 2D/3D map viewport (#map-container), keeping Win98 chrome razor-sharp. */
+:root[data-crt="true"] #map-container > canvas {
   filter: contrast(1.06) saturate(1.12);
 }
 
-:root[data-crt="true"] body::before {
+:root[data-crt="true"] #map-container::before {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 99998;
+  z-index: 9000;
   pointer-events: none;
   background: radial-gradient(
     ellipse at center,
@@ -216,11 +217,11 @@
   box-shadow: inset 0 0 36px rgba(0, 0, 0, 0.45);
 }
 
-:root[data-crt="true"] body::after {
+:root[data-crt="true"] #map-container::after {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 99999;
+  z-index: 9001;
   pointer-events: none;
   background:
     repeating-linear-gradient(

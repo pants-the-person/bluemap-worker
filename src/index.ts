@@ -60,6 +60,12 @@ const MIME_TYPES: Record<string, string> = {
   woff2: "font/woff2",
 };
 
+// Heavy map data (3D .prbm tiles, lowres .png tiles, textures.json, map settings, assets):
+// 1 hour in browsers, 24 hours in Cloudflare edge cache (caches.default).
+const HEAVY_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400";
+// Live endpoints (players.json, markers.json): bypass edge cache, brief browser TTL.
+const LIVE_CACHE_CONTROL = "public, max-age=5";
+
 const TILE_PATH_REGEX = /^tiles\/([\d/]+)\/x(-?[\d/]+)z(-?[\d/]+)(?:[./].*)?$/;
 
 function getMimeType(path: string): string {
@@ -99,8 +105,8 @@ function buildBlobResponse(
     headers.set("Content-Encoding", encoding);
   }
 
-  // Copy/wrap as Uint8Array; pass encodeBody: "manual" when pre-compressed so
-  // the Workers runtime does not double-compress already-encoded BlueMap blobs.
+  // Pass encodeBody: "manual" when pre-compressed so the Workers runtime and
+  // Cloudflare Cache API do not double-compress already-encoded BlueMap blobs.
   const body = isHead ? null : new Uint8Array(row.data);
   const init: ResponseInit & { encodeBody?: "automatic" | "manual" } = {
     status: 200,
@@ -109,6 +115,15 @@ function buildBlobResponse(
   };
 
   return new Response(body, init);
+}
+
+/**
+ * Normalizes the cache key by stripping BlueMap's per-load random `?hash`
+ * query string so all visitors share cached tiles, textures, and assets.
+ */
+function makeEdgeCacheKey(url: URL): Request {
+  const normalized = new URL(url.pathname, url.origin);
+  return new Request(normalized.toString(), { method: "GET" });
 }
 
 async function openDb(env: Env) {
@@ -124,11 +139,12 @@ async function openDb(env: Env) {
 }
 
 async function handleMapRequest(
-  pathname: string,
+  url: URL,
   isHead: boolean,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
+  const { pathname } = url;
   const rest = pathname.slice("/maps/".length);
   const slashIdx = rest.indexOf("/");
   if (slashIdx <= 0) {
@@ -137,6 +153,20 @@ async function handleMapRequest(
 
   const mapId = decodeURIComponent(rest.slice(0, slashIdx));
   const mapPath = decodeURIComponent(rest.slice(slashIdx + 1));
+  const isLive = mapPath.startsWith("live/");
+  const cache = caches.default;
+  const cacheKey = isLive ? null : makeEdgeCacheKey(url);
+
+  // Serve heavy tiles/textures/settings/assets from Cloudflare edge cache on HIT
+  if (cacheKey) {
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      if (isHead) {
+        return new Response(null, { status: cached.status, headers: cached.headers });
+      }
+      return cached;
+    }
+  }
 
   // Route 1: Map tiles (/maps/<mapId>/tiles/...)
   if (mapPath.startsWith("tiles/")) {
@@ -182,10 +212,14 @@ async function handleMapRequest(
 
       if (rows.length > 0) {
         const contentType = lod === 0 ? "application/octet-stream" : "image/png";
-        return buildBlobResponse(rows[0], contentType, "public, max-age=86400", isHead);
+        const response = buildBlobResponse(rows[0], contentType, HEAVY_CACHE_CONTROL, isHead);
+        if (cacheKey && !isHead) {
+          ctx.waitUntil(cache.put(cacheKey, response.clone()));
+        }
+        return response;
       }
 
-      // BlueMap expects 204 No Content for unrendered/empty tiles
+      // BlueMap expects 204 No Content for unrendered/empty tiles (not edge-cached)
       return new Response(null, { status: 204 });
     } catch (err) {
       console.error("Failed to fetch tile data:", err);
@@ -224,10 +258,12 @@ async function handleMapRequest(
       );
 
       if (rows.length > 0) {
-        const cacheControl = mapPath.startsWith("live/")
-          ? "public, max-age=1"
-          : "public, max-age=86400";
-        return buildBlobResponse(rows[0], getMimeType(mapPath), cacheControl, isHead);
+        const cacheControl = isLive ? LIVE_CACHE_CONTROL : HEAVY_CACHE_CONTROL;
+        const response = buildBlobResponse(rows[0], getMimeType(mapPath), cacheControl, isHead);
+        if (cacheKey && !isHead) {
+          ctx.waitUntil(cache.put(cacheKey, response.clone()));
+        }
+        return response;
       }
     } catch (err) {
       console.error("Failed to fetch meta/asset data:", err);
@@ -250,12 +286,10 @@ export default {
     }
 
     const url = new URL(request.url);
-    const { pathname } = url;
-
-    if (pathname.startsWith("/maps/")) {
-      return handleMapRequest(pathname, request.method === "HEAD", env, ctx);
+    if (url.pathname.startsWith("/maps/")) {
+      return handleMapRequest(url, request.method === "HEAD", env, ctx);
     }
 
-    return errorResponse(404, pathname);
+    return errorResponse(404, url.pathname);
   },
 } satisfies ExportedHandler<Env>;

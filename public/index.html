@@ -55,6 +55,44 @@
               };
             } catch {}
 
+            const manifests = new Map();
+            const manifestPromises = new Map();
+            window.__pp98Manifest = {
+              load(root, force = false) {
+                if (!force && manifests.has(root)) return Promise.resolve(manifests.get(root));
+                if (!force && manifestPromises.has(root)) return manifestPromises.get(root);
+                const opts = force ? { cache: "reload" } : undefined;
+                const p = fetch(`${root}/manifest.json`, opts)
+                  .then((r) => (r.ok ? r.json() : { tiles: {}, items: {} }))
+                  .then((data) => {
+                    const m = { tiles: data?.tiles || {}, items: data?.items || {} };
+                    manifests.set(root, m);
+                    return m;
+                  })
+                  .catch(() => {
+                    const empty = { tiles: {}, items: {} };
+                    manifests.set(root, empty);
+                    return empty;
+                  })
+                  .finally(() => manifestPromises.delete(root));
+                manifestPromises.set(root, p);
+                return p;
+              },
+              reload(root) {
+                manifests.delete(root);
+                manifestPromises.delete(root);
+                return this.load(root, true);
+              },
+              tileUrl(root, lod, x, z, baseUrl) {
+                const ver = manifests.get(root)?.tiles?.[`${lod}:${x}:${z}`];
+                return ver ? `${baseUrl}?v=${ver}` : baseUrl;
+              },
+              itemUrl(root, key, baseUrl) {
+                const ver = manifests.get(root)?.items?.[key];
+                return ver ? `${baseUrl}?v=${ver}` : baseUrl;
+              },
+            };
+
             const p = new URLSearchParams(location.search);
             const embed = p.get("embed") === "1" || p.get("embed") === "true" ||
               (p.get("embed") !== "0" && p.get("embed") !== "false" && (() => { try { return self !== top; } catch { return true; } })());
@@ -68,7 +106,7 @@
             } catch {}
           })();
         </script>
-      <script type="module" crossorigin src="./assets/index-pp98-2.js"></script>
+      <script type="module" crossorigin src="./assets/index-pp98-3.js"></script>
       <link rel="stylesheet" href="./assets/index-ffb10548.css">
       <link rel="stylesheet" href="./theme/win98.css">
     </head>

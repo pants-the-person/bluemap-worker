@@ -11,6 +11,18 @@ interface StorageRow extends RowDataPacket {
   compression_key: string;
 }
 
+interface TileVersionRow extends RowDataPacket {
+  storage_key: string;
+  x: number;
+  z: number;
+  ver: number;
+}
+
+interface ItemVersionRow extends RowDataPacket {
+  storage_key: string;
+  ver: number;
+}
+
 const COMPRESSION_HEADER_MAP: Record<string, string | null> = {
   "bluemap:none": null,
   "bluemap:gzip": "gzip",
@@ -70,6 +82,8 @@ const STATIC_ASSET_CLIENT_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const STATIC_ASSET_EDGE_TTL = 2592000; // 30 days in Cloudflare edge cache (textures.json, assets/*)
 const MAP_SETTINGS_CACHE_CONTROL = "public, max-age=86400";
 const MAP_SETTINGS_EDGE_TTL = 86400; // 24 hours in Cloudflare edge cache
+const MANIFEST_CACHE_CONTROL = "public, max-age=43200"; // 12 hours in browser & edge cache
+const MANIFEST_EDGE_TTL = 43200; // 12 hours in Cloudflare edge cache
 const EMPTY_TILE_CACHE_CONTROL = "public, max-age=300"; // 5 min browser cache for 204 unrendered tiles
 // Live endpoints (players.json, markers.json): 5-minute browser + Cloudflare edge cache
 const LIVE_CLIENT_CACHE_CONTROL = "public, max-age=300";
@@ -81,7 +95,7 @@ const HDR_CONTENT_TYPE = "X-BlueMap-Content-Type";
 const HDR_ENCODING = "X-BlueMap-Encoding";
 const HDR_CLIENT_CC = "X-BlueMap-Cache-Control";
 const HDR_ETAG = "X-BlueMap-ETag";
-const CACHE_KEY_VERSION = "5";
+const CACHE_KEY_VERSION = "6";
 
 const TILE_PATH_REGEX = /^tiles\/([\d/]+)\/x(-?[\d/]+)z(-?[\d/]+)(?:[./].*)?$/;
 
@@ -223,12 +237,17 @@ function buildCacheEntry(
 }
 
 /**
- * Normalizes the cache key by stripping BlueMap's per-load random `?hash`
- * query string so all visitors share cached tiles, textures, and assets.
+ * Normalizes the edge cache key: strips arbitrary query params while preserving
+ * our manifest-driven `?v=<digits>` tile/item version so updated tiles get fresh
+ * edge entries without allowing arbitrary query cache-busting.
  */
 function makeEdgeCacheKey(url: URL): Request {
   const normalized = new URL(url.pathname, url.origin);
   normalized.searchParams.set("_cv", CACHE_KEY_VERSION);
+  const ver = url.searchParams.get("v");
+  if (ver && /^\d+$/.test(ver)) {
+    normalized.searchParams.set("v", ver);
+  }
   return new Request(normalized.toString(), { method: "GET" });
 }
 
@@ -304,6 +323,98 @@ async function handleMapRequest(
         etag,
         request,
       );
+    }
+  }
+
+  // Route 0: Version manifest (/maps/<mapId>/manifest.json)
+  // Returns only tiles & static items that have changed since tracking began,
+  // cached for 12 hours in both browser and Cloudflare edge cache.
+  if (mapPath === "manifest.json") {
+    let connection;
+    try {
+      connection = await openDb(env);
+    } catch (err) {
+      console.error("Failed to connect to database:", err);
+      return errorResponse(500, pathname, "Failed to connect to database");
+    }
+
+    try {
+      const [tileRows] = await connection.query<TileVersionRow[]>(
+        `SELECT s.\`key\` AS storage_key, v.x, v.z, v.ver
+         FROM bluemap_tile_version v
+         INNER JOIN bluemap_map m ON v.map = m.id
+         INNER JOIN bluemap_grid_storage s ON v.storage = s.id
+         WHERE m.map_id = ?`,
+        [mapId],
+      );
+
+      const [itemRows] = await connection.query<ItemVersionRow[]>(
+        `SELECT s.\`key\` AS storage_key, v.ver
+         FROM bluemap_item_version v
+         INNER JOIN bluemap_map m ON v.map = m.id
+         INNER JOIN bluemap_item_storage s ON v.storage = s.id
+         WHERE m.map_id = ?`,
+        [mapId],
+      );
+
+      const tiles: Record<string, number> = {};
+      for (const r of tileRows) {
+        let lod: string | null = null;
+        if (r.storage_key === "bluemap:hires") {
+          lod = "0";
+        } else if (r.storage_key.startsWith("bluemap:lowres/")) {
+          lod = r.storage_key.slice("bluemap:lowres/".length);
+        }
+        if (lod !== null) {
+          tiles[`${lod}:${r.x}:${r.z}`] = r.ver;
+        }
+      }
+
+      const items: Record<string, number> = {};
+      for (const r of itemRows) {
+        if (r.storage_key === "bluemap:settings") {
+          items["settings.json"] = r.ver;
+        } else if (r.storage_key === "bluemap:textures") {
+          items["textures.json"] = r.ver;
+        } else if (r.storage_key.startsWith("bluemap:asset/")) {
+          items[`assets/${r.storage_key.slice("bluemap:asset/".length)}`] = r.ver;
+        }
+      }
+
+      const payload = JSON.stringify({ tiles, items });
+      const bytes = new TextEncoder().encode(payload);
+      const etag = await computeEtag(bytes);
+
+      if (cacheKey && !isHead) {
+        ctx.waitUntil(
+          cache.put(
+            cacheKey,
+            buildCacheEntry(
+              bytes,
+              "application/json",
+              null,
+              MANIFEST_CACHE_CONTROL,
+              MANIFEST_EDGE_TTL,
+              etag,
+            ),
+          ),
+        );
+      }
+
+      return buildClientResponse(
+        bytes,
+        "application/json",
+        null,
+        MANIFEST_CACHE_CONTROL,
+        cacheKey ? "MISS" : "BYPASS",
+        etag,
+        request,
+      );
+    } catch (err) {
+      console.error("Failed to fetch manifest:", err);
+      return errorResponse(500, pathname, "Failed to fetch manifest");
+    } finally {
+      ctx.waitUntil(connection.end());
     }
   }
 

@@ -313,13 +313,13 @@
           await window.__pp98RefreshLive?.();
           showToast("Checked players & markers");
         }, { disabled: !liveEnabled });
-        addItem("Force Reload Map Tiles", async () => {
-          if (bm?.mapViewer) {
-            bm.mapViewer.clearTileCache();
-            if (bm.mapViewer.map) {
-              await bm.switchMap(bm.mapViewer.map.data.id);
-            }
-            showToast("Tile cache refreshed");
+        addItem("Check for Updated Tiles", async () => {
+          if (bm?.mapViewer?.map) {
+            const root = bm.mapViewer.map.data.mapDataRoot;
+            const m = await window.__pp98Manifest?.reload?.(root);
+            const count = m ? Object.keys(m.tiles || {}).length : 0;
+            await bm.switchMap(bm.mapViewer.map.data.id);
+            showToast(`Manifest synced (${count} updated tiles tracked)`);
           }
         });
         if (!isEmbedded()) {

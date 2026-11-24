@@ -20,7 +20,7 @@
   ],
   "enableLiveData": false,
   "scripts": [
-    "theme/win98.js?v=3"
+    "theme/win98.js?v=4"
   ],
   "styles": []
 }

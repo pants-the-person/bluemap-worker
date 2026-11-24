@@ -4,7 +4,10 @@
 /theme/fonts/*
   Cache-Control: public, max-age=31536000, immutable
 
-/theme/*
+/theme/win98.css
+  Cache-Control: public, max-age=300
+
+/theme/win98.js
   Cache-Control: public, max-age=300
 
 /lang/*

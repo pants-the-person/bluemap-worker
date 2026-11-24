@@ -63,8 +63,15 @@ const MIME_TYPES: Record<string, string> = {
 // Heavy map data (3D .prbm tiles, lowres .png tiles, textures.json, map settings, assets):
 // 1 hour in browsers, 24 hours in Cloudflare edge cache (caches.default).
 const HEAVY_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400";
+const EDGE_STORE_CACHE_CONTROL = "public, max-age=86400, no-transform";
 // Live endpoints (players.json, markers.json): bypass edge cache, brief browser TTL.
 const LIVE_CACHE_CONTROL = "public, max-age=5";
+
+// Internal metadata headers stored on opaque cached blobs so Cloudflare Cache API
+// never re-encodes, strips Content-Encoding, or splits cache variants by Accept-Encoding.
+const HDR_CONTENT_TYPE = "X-BlueMap-Content-Type";
+const HDR_ENCODING = "X-BlueMap-Encoding";
+const CACHE_KEY_VERSION = "2";
 
 const TILE_PATH_REGEX = /^tiles\/([\d/]+)\/x(-?[\d/]+)z(-?[\d/]+)(?:[./].*)?$/;
 
@@ -89,32 +96,83 @@ function errorResponse(status: number, path: string, message?: string): Response
   });
 }
 
-function buildBlobResponse(
-  row: StorageRow,
+function clientAcceptsEncoding(request: Request, encoding: string): boolean {
+  const accept = request.headers.get("Accept-Encoding") ?? "";
+  return accept
+    .split(",")
+    .some((part) => part.trim().toLowerCase().split(";")[0] === encoding);
+}
+
+function buildClientResponse(
+  body: ReadableStream<Uint8Array> | Uint8Array | null,
   contentType: string,
+  encoding: string | null,
   cacheControl: string,
-  isHead: boolean,
+  cacheStatus: "HIT" | "MISS" | "BYPASS",
+  request: Request,
 ): Response {
-  const encoding = COMPRESSION_HEADER_MAP[row.compression_key] ?? null;
+  const isHead = request.method === "HEAD";
   const headers = new Headers({
     "Content-Type": contentType,
-    "Cache-Control": encoding ? `${cacheControl}, no-transform` : cacheControl,
+    "X-BlueMap-Cache": cacheStatus,
   });
 
   if (encoding) {
+    headers.set("Vary", "Accept-Encoding");
+
+    if (clientAcceptsEncoding(request, encoding)) {
+      headers.set("Content-Encoding", encoding);
+      headers.set("Cache-Control", `${cacheControl}, no-transform`);
+      const init: ResponseInit & { encodeBody?: "automatic" | "manual" } = {
+        status: 200,
+        headers,
+        encodeBody: "manual",
+      };
+      return new Response(isHead ? null : body, init);
+    }
+
+    // Fallback for clients that do not advertise gzip (e.g. plain curl without --compressed)
+    if (encoding === "gzip" && !isHead && body) {
+      headers.set("Cache-Control", cacheControl);
+      const stream =
+        body instanceof Uint8Array
+          ? new Response(body).body!
+          : body;
+      return new Response(stream.pipeThrough(new DecompressionStream("gzip")), {
+        status: 200,
+        headers,
+      });
+    }
+
+    // Unsupported encoding fallback: pass through with encoding header intact
     headers.set("Content-Encoding", encoding);
+    headers.set("Cache-Control", `${cacheControl}, no-transform`);
+    const init: ResponseInit & { encodeBody?: "automatic" | "manual" } = {
+      status: 200,
+      headers,
+      encodeBody: "manual",
+    };
+    return new Response(isHead ? null : body, init);
   }
 
-  // Pass encodeBody: "manual" when pre-compressed so the Workers runtime and
-  // Cloudflare Cache API do not double-compress already-encoded BlueMap blobs.
-  const body = isHead ? null : new Uint8Array(row.data);
-  const init: ResponseInit & { encodeBody?: "automatic" | "manual" } = {
-    status: 200,
-    headers,
-    ...(encoding ? { encodeBody: "manual" } : {}),
-  };
+  headers.set("Cache-Control", cacheControl);
+  return new Response(isHead ? null : body, { status: 200, headers });
+}
 
-  return new Response(body, init);
+function buildCacheEntry(
+  bytes: Uint8Array,
+  contentType: string,
+  encoding: string | null,
+): Response {
+  const headers = new Headers({
+    "Content-Type": "application/octet-stream",
+    "Cache-Control": EDGE_STORE_CACHE_CONTROL,
+    [HDR_CONTENT_TYPE]: contentType,
+  });
+  if (encoding) {
+    headers.set(HDR_ENCODING, encoding);
+  }
+  return new Response(bytes, { status: 200, headers });
 }
 
 /**
@@ -123,6 +181,7 @@ function buildBlobResponse(
  */
 function makeEdgeCacheKey(url: URL): Request {
   const normalized = new URL(url.pathname, url.origin);
+  normalized.searchParams.set("_cv", CACHE_KEY_VERSION);
   return new Request(normalized.toString(), { method: "GET" });
 }
 
@@ -139,8 +198,8 @@ async function openDb(env: Env) {
 }
 
 async function handleMapRequest(
+  request: Request,
   url: URL,
-  isHead: boolean,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
@@ -154,6 +213,7 @@ async function handleMapRequest(
   const mapId = decodeURIComponent(rest.slice(0, slashIdx));
   const mapPath = decodeURIComponent(rest.slice(slashIdx + 1));
   const isLive = mapPath.startsWith("live/");
+  const isHead = request.method === "HEAD";
   const cache = caches.default;
   const cacheKey = isLive ? null : makeEdgeCacheKey(url);
 
@@ -161,10 +221,16 @@ async function handleMapRequest(
   if (cacheKey) {
     const cached = await cache.match(cacheKey);
     if (cached) {
-      if (isHead) {
-        return new Response(null, { status: cached.status, headers: cached.headers });
-      }
-      return cached;
+      const contentType = cached.headers.get(HDR_CONTENT_TYPE) ?? MIME_DEFAULT;
+      const encoding = cached.headers.get(HDR_ENCODING);
+      return buildClientResponse(
+        cached.body,
+        contentType,
+        encoding,
+        HEAVY_CACHE_CONTROL,
+        "HIT",
+        request,
+      );
     }
   }
 
@@ -211,12 +277,22 @@ async function handleMapRequest(
       );
 
       if (rows.length > 0) {
+        const bytes = new Uint8Array(rows[0].data);
         const contentType = lod === 0 ? "application/octet-stream" : "image/png";
-        const response = buildBlobResponse(rows[0], contentType, HEAVY_CACHE_CONTROL, isHead);
+        const encoding = COMPRESSION_HEADER_MAP[rows[0].compression_key] ?? null;
+
         if (cacheKey && !isHead) {
-          ctx.waitUntil(cache.put(cacheKey, response.clone()));
+          ctx.waitUntil(cache.put(cacheKey, buildCacheEntry(bytes, contentType, encoding)));
         }
-        return response;
+
+        return buildClientResponse(
+          bytes,
+          contentType,
+          encoding,
+          HEAVY_CACHE_CONTROL,
+          cacheKey ? "MISS" : "BYPASS",
+          request,
+        );
       }
 
       // BlueMap expects 204 No Content for unrendered/empty tiles (not edge-cached)
@@ -258,12 +334,23 @@ async function handleMapRequest(
       );
 
       if (rows.length > 0) {
+        const bytes = new Uint8Array(rows[0].data);
+        const contentType = getMimeType(mapPath);
+        const encoding = COMPRESSION_HEADER_MAP[rows[0].compression_key] ?? null;
         const cacheControl = isLive ? LIVE_CACHE_CONTROL : HEAVY_CACHE_CONTROL;
-        const response = buildBlobResponse(rows[0], getMimeType(mapPath), cacheControl, isHead);
+
         if (cacheKey && !isHead) {
-          ctx.waitUntil(cache.put(cacheKey, response.clone()));
+          ctx.waitUntil(cache.put(cacheKey, buildCacheEntry(bytes, contentType, encoding)));
         }
-        return response;
+
+        return buildClientResponse(
+          bytes,
+          contentType,
+          encoding,
+          cacheControl,
+          cacheKey ? "MISS" : "BYPASS",
+          request,
+        );
       }
     } catch (err) {
       console.error("Failed to fetch meta/asset data:", err);
@@ -287,7 +374,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname.startsWith("/maps/")) {
-      return handleMapRequest(url, request.method === "HEAD", env, ctx);
+      return handleMapRequest(request, url, env, ctx);
     }
 
     return errorResponse(404, url.pathname);

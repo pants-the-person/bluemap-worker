@@ -70,15 +70,16 @@ const STATIC_ASSET_EDGE_TTL = 2592000; // 30 days in Cloudflare edge cache (text
 const MAP_SETTINGS_CACHE_CONTROL = "public, max-age=86400";
 const MAP_SETTINGS_EDGE_TTL = 86400; // 24 hours in Cloudflare edge cache
 const EMPTY_TILE_CACHE_CONTROL = "public, max-age=300"; // 5 min browser cache for 204 unrendered tiles
-// Live endpoints (players.json, markers.json): bypass edge cache, brief browser TTL.
-const LIVE_CACHE_CONTROL = "public, max-age=5";
+// Live endpoints (players.json, markers.json): 5-minute browser + Cloudflare edge cache
+const LIVE_CLIENT_CACHE_CONTROL = "public, max-age=300";
+const LIVE_EDGE_TTL = 300; // 5 minutes in Cloudflare edge cache
 
 // Internal metadata headers stored on opaque cached blobs so Cloudflare Cache API
 // never re-encodes, strips Content-Encoding, or splits cache variants by Accept-Encoding.
 const HDR_CONTENT_TYPE = "X-BlueMap-Content-Type";
 const HDR_ENCODING = "X-BlueMap-Encoding";
 const HDR_CLIENT_CC = "X-BlueMap-Cache-Control";
-const CACHE_KEY_VERSION = "3";
+const CACHE_KEY_VERSION = "4";
 
 const TILE_PATH_REGEX = /^tiles\/([\d/]+)\/x(-?[\d/]+)z(-?[\d/]+)(?:[./].*)?$/;
 
@@ -225,7 +226,7 @@ async function handleMapRequest(
   const isLive = mapPath.startsWith("live/");
   const isHead = request.method === "HEAD";
   const cache = caches.default;
-  const cacheKey = isLive ? null : makeEdgeCacheKey(url);
+  const cacheKey = makeEdgeCacheKey(url);
 
   // Serve heavy tiles/textures/settings/assets from Cloudflare edge cache on HIT
   if (cacheKey) {
@@ -366,11 +367,15 @@ async function handleMapRequest(
         const encoding = COMPRESSION_HEADER_MAP[rows[0].compression_key] ?? null;
         const isMapSettings = mapPath === "settings.json";
         const cacheControl = isLive
-          ? LIVE_CACHE_CONTROL
+          ? LIVE_CLIENT_CACHE_CONTROL
           : isMapSettings
             ? MAP_SETTINGS_CACHE_CONTROL
             : STATIC_ASSET_CLIENT_CACHE_CONTROL;
-        const edgeTtl = isMapSettings ? MAP_SETTINGS_EDGE_TTL : STATIC_ASSET_EDGE_TTL;
+        const edgeTtl = isLive
+          ? LIVE_EDGE_TTL
+          : isMapSettings
+            ? MAP_SETTINGS_EDGE_TTL
+            : STATIC_ASSET_EDGE_TTL;
 
         if (cacheKey && !isHead) {
           ctx.waitUntil(

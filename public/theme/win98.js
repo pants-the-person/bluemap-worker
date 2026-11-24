@@ -308,6 +308,10 @@
             showToast("Could not access clipboard");
           }
         });
+        addItem("Refresh Players & Markers", async () => {
+          await window.__pp98RefreshLive?.();
+          showToast("Checked players & markers");
+        });
         addItem("Force Reload Map Tiles", async () => {
           if (bm?.mapViewer) {
             bm.mapViewer.clearTileCache();
@@ -443,7 +447,8 @@
     const mapField = statusbar.querySelector("[data-pp98-map]");
     const coordsField = statusbar.querySelector("[data-pp98-coords]");
     const modeField = statusbar.querySelector("[data-pp98-mode]");
-    const playersField = statusbar.querySelector("[data-pp98-players] span:last-child");
+    const playersBox = statusbar.querySelector("[data-pp98-players]");
+    const playersField = playersBox.querySelector("span:last-child");
     const titleText = titlebar.querySelector(".pp98-titlebar-text");
 
     const MODE_LABELS = {
@@ -451,6 +456,158 @@
       flat: "Flat View",
       free: "Free Flight",
     };
+
+    // Adaptive backoff polling for live/players.json & live/markers.json.
+    // Replaces BlueMap's default 1s player poll and 10s marker poll so idle tabs
+    // back off smoothly up to once every 6 hours and pause while hidden.
+    const EMPTY_BACKOFF_MS = [
+      60 * 1000,         // empty #1: 1m
+      60 * 1000,         // empty #2: 1m
+      60 * 1000,         // empty #3: 1m
+      5 * 60 * 1000,     // empty #4: 5m
+      15 * 60 * 1000,    // empty #5: 15m
+      30 * 60 * 1000,    // empty #6: 30m
+      60 * 60 * 1000,    // empty #7: 1h
+      3 * 60 * 60 * 1000, // empty #8: 3h
+      6 * 60 * 60 * 1000, // empty #9+: 6h (max)
+    ];
+    const ACTIVE_PLAYER_POLL_MS = 60 * 1000;       // 1m when players are online
+    const MIN_MARKER_POLL_MS = 5 * 60 * 1000;      // 5m minimum for markers.json
+
+    let emptyStreak = 0;
+    let currentIntervalMs = ACTIVE_PLAYER_POLL_MS;
+    let playerTimer = null;
+    let markerTimer = null;
+    let nextPlayerAt = 0;
+    let nextMarkerAt = 0;
+
+    function formatInterval(ms) {
+      if (ms >= 3600000) return `${Math.round(ms / 3600000)}h`;
+      if (ms >= 60000) return `${Math.round(ms / 60000)}m`;
+      return `${Math.round(ms / 1000)}s`;
+    }
+
+    function getPlayerCount() {
+      const bm = window.bluemap;
+      const playerSet = bm?.mapViewer?.markers?.markerSets?.get?.("bm-players");
+      return playerSet?.markers?.size ?? 0;
+    }
+
+    function computeNextInterval(count) {
+      if (count > 0) {
+        emptyStreak = 0;
+        return ACTIVE_PLAYER_POLL_MS;
+      }
+      const idx = Math.min(emptyStreak, EMPTY_BACKOFF_MS.length - 1);
+      emptyStreak += 1;
+      return EMPTY_BACKOFF_MS[idx];
+    }
+
+    function schedulePlayerPoll(delayMs) {
+      if (playerTimer) clearTimeout(playerTimer);
+      currentIntervalMs = delayMs;
+      nextPlayerAt = Date.now() + delayMs;
+      playerTimer = setTimeout(() => {
+        if (document.hidden) return;
+        runPlayerPoll();
+      }, delayMs);
+    }
+
+    function scheduleMarkerPoll(delayMs) {
+      if (markerTimer) clearTimeout(markerTimer);
+      const clamped = Math.max(delayMs, MIN_MARKER_POLL_MS);
+      nextMarkerAt = Date.now() + clamped;
+      markerTimer = setTimeout(() => {
+        if (document.hidden) return;
+        runMarkerPoll();
+      }, clamped);
+    }
+
+    async function runPlayerPoll() {
+      const bm = window.bluemap;
+      const mgr = bm?.playerMarkerManager;
+      if (!mgr || mgr.disposed) return;
+      mgr.setAutoUpdateInterval(0);
+      try {
+        await mgr.update();
+      } catch {
+        // ignore transient network errors
+      }
+      const nextDelay = computeNextInterval(getPlayerCount());
+      schedulePlayerPoll(nextDelay);
+      updateStatus();
+    }
+
+    async function runMarkerPoll() {
+      const bm = window.bluemap;
+      const mgr = bm?.markerFileManager;
+      if (!mgr || mgr.disposed) return;
+      mgr.setAutoUpdateInterval(0);
+      try {
+        await mgr.update();
+      } catch {
+        // ignore transient network errors
+      }
+      scheduleMarkerPoll(currentIntervalMs);
+    }
+
+    async function refreshLiveNow() {
+      emptyStreak = 0;
+      await Promise.all([runPlayerPoll(), runMarkerPoll()]);
+    }
+
+    window.__pp98RefreshLive = refreshLiveNow;
+
+    function attachAdaptivePolling() {
+      const bm = window.bluemap;
+      if (!bm || bm.__pp98AdaptivePolling) return;
+      bm.__pp98AdaptivePolling = true;
+
+      // Stop BlueMap's default 1s & 10s timers immediately
+      bm.playerMarkerManager?.setAutoUpdateInterval?.(0);
+      bm.markerFileManager?.setAutoUpdateInterval?.(0);
+
+      // Wrap map-switch initializers so switching dimensions keeps adaptive backoff
+      const origInitPlayers = bm.initPlayerMarkerManager?.bind(bm);
+      if (origInitPlayers) {
+        bm.initPlayerMarkerManager = async (...args) => {
+          const res = await origInitPlayers(...args);
+          bm.playerMarkerManager?.setAutoUpdateInterval?.(0);
+          emptyStreak = 0;
+          const nextDelay = computeNextInterval(getPlayerCount());
+          schedulePlayerPoll(nextDelay);
+          return res;
+        };
+      }
+
+      const origInitMarkers = bm.initMarkerFileManager?.bind(bm);
+      if (origInitMarkers) {
+        bm.initMarkerFileManager = async (...args) => {
+          const res = await origInitMarkers(...args);
+          bm.markerFileManager?.setAutoUpdateInterval?.(0);
+          scheduleMarkerPoll(currentIntervalMs);
+          return res;
+        };
+      }
+
+      // Start initial backoff schedule based on the already-completed initial load
+      const firstDelay = computeNextInterval(getPlayerCount());
+      schedulePlayerPoll(firstDelay);
+      scheduleMarkerPoll(firstDelay);
+
+      // Resume deferred polls when returning to a hidden tab
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) return;
+        const now = Date.now();
+        if (now >= nextPlayerAt) runPlayerPoll();
+        if (now >= nextMarkerAt) runMarkerPoll();
+      });
+    }
+
+    playersBox.addEventListener("click", async () => {
+      await refreshLiveNow();
+      showToast("Checked players & markers");
+    });
 
     function updateStatus() {
       const bm = window.bluemap;
@@ -473,14 +630,14 @@
       const state = bm.appState?.controls?.state || "perspective";
       modeField.textContent = MODE_LABELS[state] || state;
 
-      // Count online players from BlueMap's player marker set
-      const playerSet = bm.mapViewer?.markers?.markerSets?.get?.("bm-players");
-      const count = playerSet?.markers?.size ?? 0;
+      const count = getPlayerCount();
       playersField.textContent = `${count} online`;
+      playersBox.title = `${count} online — polling every ${formatInterval(currentIntervalMs)} (click to refresh now)`;
     }
 
+    attachAdaptivePolling();
     updateStatus();
-    setInterval(updateStatus, 400);
+    setInterval(updateStatus, 500);
 
     // Ensure Three.js WebGL renderer matches the new sunken viewport dimensions
     requestAnimationFrame(() => {

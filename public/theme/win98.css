@@ -1280,10 +1280,19 @@ body {
 }
 
 .pp98-status-field.players {
-  flex: 0 0 110px;
+  flex: 0 0 115px;
   display: flex;
   align-items: center;
   gap: 5px;
+  cursor: pointer;
+}
+
+.pp98-status-field.players:hover {
+  background: var(--surface-light);
+}
+
+.pp98-status-field.players:active {
+  box-shadow: var(--bevel-sunken);
 }
 
 .pp98-status-dot {

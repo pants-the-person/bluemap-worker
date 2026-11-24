@@ -6,6 +6,9 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  "vars": {
+    "ENABLE_LIVE_DATA": "false"
+  },
   "observability": {
     "logs": {
       "enabled": true,

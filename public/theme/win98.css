@@ -1303,6 +1303,10 @@ body {
   flex-shrink: 0;
 }
 
+.pp98-status-dot.offline {
+  background: var(--shadow);
+}
+
 .pp98-status-grip {
   width: 13px;
   height: 16px;

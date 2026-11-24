@@ -308,10 +308,11 @@
             showToast("Could not access clipboard");
           }
         });
+        const liveEnabled = Boolean(bm?.settings?.enableLiveData);
         addItem("Refresh Players & Markers", async () => {
           await window.__pp98RefreshLive?.();
           showToast("Checked players & markers");
-        });
+        }, { disabled: !liveEnabled });
         addItem("Force Reload Map Tiles", async () => {
           if (bm?.mapViewer) {
             bm.mapViewer.clearTileCache();
@@ -448,8 +449,13 @@
     const coordsField = statusbar.querySelector("[data-pp98-coords]");
     const modeField = statusbar.querySelector("[data-pp98-mode]");
     const playersBox = statusbar.querySelector("[data-pp98-players]");
+    const playersDot = playersBox.querySelector(".pp98-status-dot");
     const playersField = playersBox.querySelector("span:last-child");
     const titleText = titlebar.querySelector(".pp98-titlebar-text");
+
+    function isLiveEnabled() {
+      return Boolean(window.bluemap?.settings?.enableLiveData);
+    }
 
     const MODE_LABELS = {
       perspective: "3D View",
@@ -589,12 +595,16 @@
       disableBuiltInAutoUpdate(bm.playerMarkerManager);
       disableBuiltInAutoUpdate(bm.markerFileManager);
 
-      // 2. Dispose any existing managers to set `disposed = true`, permanently
-      //    killing any in-flight `update().then(...)` 1s/10s loops started before win98.js loaded.
+      // 2. Dispose any existing managers to kill any stray timers
       const hadPlayers = Boolean(bm.playerMarkerManager);
       const hadMarkers = Boolean(bm.markerFileManager);
       bm.playerMarkerManager?.dispose?.();
       bm.markerFileManager?.dispose?.();
+
+      // Feature flag: when enableLiveData is false in settings.json, do not poll live/* at all
+      if (!isLiveEnabled()) {
+        return;
+      }
 
       // 3. Wrap map-switch initializers so switching dimensions stays on adaptive polling
       const origInitPlayers = bm.initPlayerMarkerManager?.bind(bm);
@@ -641,6 +651,10 @@
     }
 
     playersBox.addEventListener("click", async () => {
+      if (!isLiveEnabled()) {
+        showToast("Live players & markers are disabled");
+        return;
+      }
       await refreshLiveNow();
       showToast("Checked players & markers");
     });
@@ -666,9 +680,16 @@
       const state = bm.appState?.controls?.state || "perspective";
       modeField.textContent = MODE_LABELS[state] || state;
 
-      const count = getPlayerCount();
-      playersField.textContent = `${count} online`;
-      playersBox.title = `${count} online — polling every ${formatInterval(currentIntervalMs)} (click to refresh now)`;
+      if (!isLiveEnabled()) {
+        playersDot.classList.add("offline");
+        playersField.textContent = "Live: Off";
+        playersBox.title = "Live player & marker polling is disabled (static mode)";
+      } else {
+        playersDot.classList.remove("offline");
+        const count = getPlayerCount();
+        playersField.textContent = `${count} online`;
+        playersBox.title = `${count} online — polling every ${formatInterval(currentIntervalMs)} (click to refresh now)`;
+      }
     }
 
     attachAdaptivePolling();

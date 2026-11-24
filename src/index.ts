@@ -3,6 +3,7 @@ import { createConnection, type RowDataPacket } from "mysql2/promise";
 export interface Env {
   ASSETS: Fetcher;
   HYPERDRIVE: Hyperdrive;
+  ENABLE_LIVE_DATA?: string;
 }
 
 interface StorageRow extends RowDataPacket {
@@ -260,6 +261,28 @@ async function handleMapRequest(
   const mapPath = decodeURIComponent(rest.slice(slashIdx + 1));
   const isLive = mapPath.startsWith("live/");
   const isHead = request.method === "HEAD";
+
+  // Feature flag: when ENABLE_LIVE_DATA !== "true", short-circuit /live/* without touching Hyperdrive/MySQL.
+  if (isLive && env.ENABLE_LIVE_DATA !== "true") {
+    const emptyBody =
+      mapPath === "live/players.json"
+        ? '{"players":[]}'
+        : mapPath === "live/markers.json"
+          ? "{}"
+          : null;
+    if (emptyBody === null) {
+      return errorResponse(404, pathname);
+    }
+    return new Response(isHead ? null : emptyBody, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "public, max-age=86400",
+        "X-BlueMap-Live": "disabled",
+      },
+    });
+  }
+
   const cache = caches.default;
   const cacheKey = makeEdgeCacheKey(url);
 

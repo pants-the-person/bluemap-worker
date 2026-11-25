@@ -116,18 +116,14 @@
     vec2 applyBarrel(vec2 uv, float amount) {
       vec2 centered = uv - 0.5;
       float r2 = dot(centered, centered);
-      return 0.5 + centered * (1.0 + amount * r2);
+      // Overscan compensation so curved glass stays 100% full-bleed with no black borders
+      float overscan = 1.0 / (1.0 + 0.5 * amount);
+      return clamp(0.5 + centered * (1.0 + amount * r2) * overscan, 0.0, 1.0);
     }
 
     void main() {
       float curveAmt = u_barrel + u_curvature;
       vec2 uv = applyBarrel(v_texCoord, curveAmt);
-
-      // Soft rounded CRT tube corner bezel outside [0, 1]
-      if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-        gl_FragColor = vec4(0.02, 0.02, 0.025, 1.0);
-        return;
-      }
 
       // Subtle pre-sample horizontal tearing & vertical sync jitter
       if (u_tearing > 0.0) {
@@ -209,11 +205,9 @@
         col *= 1.0 + u_flicker * sin(u_time * 55.0);
       }
 
-      // Curved-tube edge vignette + smooth corner bezel falloff
-      vec2 edgeDist = min(uv, 1.0 - uv);
-      float bezel = smoothstep(0.0, 0.012, edgeDist.x) * smoothstep(0.0, 0.012, edgeDist.y);
-      float vig = 1.0 - u_vignette * dot(centered * 1.45, centered * 1.45);
-      col *= clamp(vig, 0.25, 1.0) * bezel;
+      // Subtle CRT edge vignette (no black border)
+      float vig = 1.0 - u_vignette * dot(centered * 1.35, centered * 1.35);
+      col *= clamp(vig, 0.4, 1.0);
 
       gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
     }

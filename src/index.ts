@@ -11,11 +11,24 @@ interface StorageRow extends RowDataPacket {
   compression_key: string;
 }
 
-interface TileVersionRow extends RowDataPacket {
-  storage_key: string;
+interface RegionTileRow extends RowDataPacket {
   x: number;
   z: number;
-  ver: number;
+  data: Uint8Array | Buffer;
+  compression_key: string;
+}
+
+interface RegionIndexRow extends RowDataPacket {
+  storage_key: string;
+  rx: number;
+  rz: number;
+}
+
+interface RegionVersionRow extends RowDataPacket {
+  storage_key: string;
+  rx: number;
+  rz: number;
+  rver: number;
 }
 
 interface ItemVersionRow extends RowDataPacket {
@@ -95,7 +108,19 @@ const HDR_CONTENT_TYPE = "X-BlueMap-Content-Type";
 const HDR_ENCODING = "X-BlueMap-Encoding";
 const HDR_CLIENT_CC = "X-BlueMap-Cache-Control";
 const HDR_ETAG = "X-BlueMap-ETag";
-const CACHE_KEY_VERSION = "6";
+const CACHE_KEY_VERSION = "7";
+
+// 8x8 tile super-regions (up to 64 tiles per single Worker request & SQL range query)
+const REGION_SIZE = 8;
+const REGION_PATH_REGEX = /^region\/(\d+)\/(-?\d+)\/(-?\d+)\.pack$/;
+
+const COMPRESSION_CODE_MAP: Record<string, number> = {
+  "bluemap:none": 0,
+  "bluemap:gzip": 1,
+  "bluemap:deflate": 2,
+  "bluemap:zstd": 3,
+  "bluemap:lz4": 4,
+};
 
 const TILE_PATH_REGEX = /^tiles\/([\d/]+)\/x(-?[\d/]+)z(-?[\d/]+)(?:[./].*)?$/;
 
@@ -251,6 +276,47 @@ function makeEdgeCacheKey(url: URL): Request {
   return new Request(normalized.toString(), { method: "GET" });
 }
 
+function packRegionBinary(rows: RegionTileRow[]): Uint8Array {
+  // Format "BM98" v1 (little-endian):
+  //   Header (8 bytes): magic "BM98", uint16 version=1, uint16 count=rows.length
+  //   Per entry: int32 x, int32 z, uint8 compression, uint8[3] pad, uint32 byteLength, byteLength bytes
+  let totalBytes = 8;
+  for (const r of rows) {
+    totalBytes += 16 + r.data.byteLength;
+  }
+
+  const out = new Uint8Array(totalBytes);
+  const view = new DataView(out.buffer);
+  out[0] = 0x42; // 'B'
+  out[1] = 0x4d; // 'M'
+  out[2] = 0x39; // '9'
+  out[3] = 0x38; // '8'
+  view.setUint16(4, 1, true);
+  view.setUint16(6, rows.length, true);
+
+  let offset = 8;
+  for (const r of rows) {
+    const bytes = r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data);
+    view.setInt32(offset, r.x, true);
+    view.setInt32(offset + 4, r.z, true);
+    out[offset + 8] = COMPRESSION_CODE_MAP[r.compression_key] ?? 0;
+    // bytes offset+9..11 remain 0 padding
+    view.setUint32(offset + 12, bytes.byteLength, true);
+    out.set(bytes, offset + 16);
+    offset += 16 + bytes.byteLength;
+  }
+
+  return out;
+}
+
+function storageKeyToLod(storageKey: string): string | null {
+  if (storageKey === "bluemap:hires") return "0";
+  if (storageKey.startsWith("bluemap:lowres/")) {
+    return storageKey.slice("bluemap:lowres/".length);
+  }
+  return null;
+}
+
 async function openDb(env: Env) {
   return createConnection({
     host: env.HYPERDRIVE.host,
@@ -326,9 +392,9 @@ async function handleMapRequest(
     }
   }
 
-  // Route 0: Version manifest (/maps/<mapId>/manifest.json)
-  // Returns only tiles & static items that have changed since tracking began,
-  // cached for 12 hours in both browser and Cloudflare edge cache.
+  // Route 0: Version & region-existence manifest (/maps/<mapId>/manifest.json)
+  // Uses a fast Primary Key index-only scan for existing 8x8 regions plus summed
+  // version counters from bluemap_tile_version. Cached 12 hours in browser & edge.
   if (mapPath === "manifest.json") {
     let connection;
     try {
@@ -339,12 +405,24 @@ async function handleMapRequest(
     }
 
     try {
-      const [tileRows] = await connection.query<TileVersionRow[]>(
-        `SELECT s.\`key\` AS storage_key, v.x, v.z, v.ver
+      const [regionRows] = await connection.query<RegionIndexRow[]>(
+        `SELECT s.\`key\` AS storage_key, FLOOR(d.x / ${REGION_SIZE}) AS rx, FLOOR(d.z / ${REGION_SIZE}) AS rz
+         FROM bluemap_grid_storage_data d
+         INNER JOIN bluemap_map m ON d.map = m.id
+         INNER JOIN bluemap_grid_storage s ON d.storage = s.id
+         WHERE m.map_id = ?
+           AND (s.\`key\` = 'bluemap:hires' OR s.\`key\` LIKE 'bluemap:lowres/%')
+         GROUP BY s.\`key\`, FLOOR(d.x / ${REGION_SIZE}), FLOOR(d.z / ${REGION_SIZE})`,
+        [mapId],
+      );
+
+      const [verRows] = await connection.query<RegionVersionRow[]>(
+        `SELECT s.\`key\` AS storage_key, FLOOR(v.x / ${REGION_SIZE}) AS rx, FLOOR(v.z / ${REGION_SIZE}) AS rz, SUM(v.ver) AS rver
          FROM bluemap_tile_version v
          INNER JOIN bluemap_map m ON v.map = m.id
          INNER JOIN bluemap_grid_storage s ON v.storage = s.id
-         WHERE m.map_id = ?`,
+         WHERE m.map_id = ?
+         GROUP BY s.\`key\`, FLOOR(v.x / ${REGION_SIZE}), FLOOR(v.z / ${REGION_SIZE})`,
         [mapId],
       );
 
@@ -357,16 +435,20 @@ async function handleMapRequest(
         [mapId],
       );
 
-      const tiles: Record<string, number> = {};
-      for (const r of tileRows) {
-        let lod: string | null = null;
-        if (r.storage_key === "bluemap:hires") {
-          lod = "0";
-        } else if (r.storage_key.startsWith("bluemap:lowres/")) {
-          lod = r.storage_key.slice("bluemap:lowres/".length);
-        }
+      const regions: Record<string, number> = {};
+      for (const r of regionRows) {
+        const lod = storageKeyToLod(r.storage_key);
         if (lod !== null) {
-          tiles[`${lod}:${r.x}:${r.z}`] = r.ver;
+          regions[`${lod}:${Number(r.rx)}:${Number(r.rz)}`] = 0;
+        }
+      }
+      for (const r of verRows) {
+        const lod = storageKeyToLod(r.storage_key);
+        if (lod !== null) {
+          const key = `${lod}:${Number(r.rx)}:${Number(r.rz)}`;
+          if (key in regions) {
+            regions[key] = Number(r.rver);
+          }
         }
       }
 
@@ -381,7 +463,7 @@ async function handleMapRequest(
         }
       }
 
-      const payload = JSON.stringify({ tiles, items });
+      const payload = JSON.stringify({ regionSize: REGION_SIZE, regions, items });
       const bytes = new TextEncoder().encode(payload);
       const etag = await computeEtag(bytes);
 
@@ -418,7 +500,87 @@ async function handleMapRequest(
     }
   }
 
-  // Route 1: Map tiles (/maps/<mapId>/tiles/...)
+  // Route 0.5: 8x8 Region Pack (/maps/<mapId>/region/<lod>/<rx>/<rz>.pack)
+  // Bundles up to 64 tiles into a single binary payload, single SQL range scan,
+  // and single shared Cloudflare edge cache entry.
+  if (mapPath.startsWith("region/")) {
+    const match = REGION_PATH_REGEX.exec(mapPath);
+    if (!match) {
+      return errorResponse(404, pathname);
+    }
+
+    const lod = Number.parseInt(match[1], 10);
+    const rx = Number.parseInt(match[2], 10);
+    const rz = Number.parseInt(match[3], 10);
+    if (!Number.isFinite(lod) || !Number.isFinite(rx) || !Number.isFinite(rz)) {
+      return errorResponse(404, pathname);
+    }
+
+    const storage = lod === 0 ? "bluemap:hires" : `bluemap:lowres/${lod}`;
+    const minX = rx * REGION_SIZE;
+    const maxX = minX + REGION_SIZE - 1;
+    const minZ = rz * REGION_SIZE;
+    const maxZ = minZ + REGION_SIZE - 1;
+
+    let connection;
+    try {
+      connection = await openDb(env);
+    } catch (err) {
+      console.error("Failed to connect to database:", err);
+      return errorResponse(500, pathname, "Failed to connect to database");
+    }
+
+    try {
+      const [rows] = await connection.query<RegionTileRow[]>(
+        `SELECT d.x, d.z, d.data, c.\`key\` AS compression_key
+         FROM bluemap_grid_storage_data d
+         INNER JOIN bluemap_map m ON d.map = m.id
+         INNER JOIN bluemap_grid_storage s ON d.storage = s.id
+         INNER JOIN bluemap_compression c ON d.compression = c.id
+         WHERE m.map_id = ?
+           AND s.\`key\` = ?
+           AND d.x >= ? AND d.x <= ?
+           AND d.z >= ? AND d.z <= ?`,
+        [mapId, storage, minX, maxX, minZ, maxZ],
+      );
+
+      const packed = packRegionBinary(rows);
+      const etag = await computeEtag(packed);
+
+      if (cacheKey && !isHead) {
+        ctx.waitUntil(
+          cache.put(
+            cacheKey,
+            buildCacheEntry(
+              packed,
+              "application/octet-stream",
+              null,
+              TILE_CLIENT_CACHE_CONTROL,
+              TILE_EDGE_TTL,
+              etag,
+            ),
+          ),
+        );
+      }
+
+      return buildClientResponse(
+        packed,
+        "application/octet-stream",
+        null,
+        TILE_CLIENT_CACHE_CONTROL,
+        cacheKey ? "MISS" : "BYPASS",
+        etag,
+        request,
+      );
+    } catch (err) {
+      console.error("Failed to fetch region pack:", err);
+      return errorResponse(500, pathname, "Failed to fetch region pack");
+    } finally {
+      ctx.waitUntil(connection.end());
+    }
+  }
+
+  // Route 1: Individual map tiles (/maps/<mapId>/tiles/...) — kept for compatibility
   if (mapPath.startsWith("tiles/")) {
     const match = TILE_PATH_REGEX.exec(mapPath);
     if (!match) {

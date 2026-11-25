@@ -57,20 +57,62 @@
 
             const manifests = new Map();
             const manifestPromises = new Map();
+            const regionCache = new Map(); // cacheKey -> Map("x:z" -> { comp, bytes })
+            const regionInflight = new Map();
+            const MAX_MEM_REGIONS = 48;
+
+            const parseRegionPack = (buf) => {
+              const out = new Map();
+              if (!buf || buf.byteLength < 8) return out;
+              const u8 = new Uint8Array(buf);
+              const view = new DataView(buf);
+              if (u8[0] !== 0x42 || u8[1] !== 0x4d || u8[2] !== 0x39 || u8[3] !== 0x38) return out;
+              const count = view.getUint16(6, true);
+              let off = 8;
+              for (let i = 0; i < count && off + 16 <= buf.byteLength; i++) {
+                const x = view.getInt32(off, true);
+                const z = view.getInt32(off + 4, true);
+                const comp = u8[off + 8];
+                const len = view.getUint32(off + 12, true);
+                off += 16;
+                if (off + len > buf.byteLength) break;
+                out.set(`${x}:${z}`, { comp, bytes: u8.subarray(off, off + len) });
+                off += len;
+              }
+              return out;
+            };
+
+            const decompressEntry = async (entry) => {
+              if (!entry) return null;
+              if (entry.comp === 1 && typeof DecompressionStream !== "undefined") {
+                const stream = new Blob([entry.bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+                return await new Response(stream).arrayBuffer();
+              }
+              if (entry.comp === 2 && typeof DecompressionStream !== "undefined") {
+                const stream = new Blob([entry.bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
+                return await new Response(stream).arrayBuffer();
+              }
+              return entry.bytes.slice().buffer;
+            };
+
             window.__pp98Manifest = {
               load(root, force = false) {
                 if (!force && manifests.has(root)) return Promise.resolve(manifests.get(root));
                 if (!force && manifestPromises.has(root)) return manifestPromises.get(root);
                 const opts = force ? { cache: "reload" } : undefined;
                 const p = fetch(`${root}/manifest.json`, opts)
-                  .then((r) => (r.ok ? r.json() : { tiles: {}, items: {} }))
+                  .then((r) => (r.ok ? r.json() : { regionSize: 8, regions: null, items: {} }))
                   .then((data) => {
-                    const m = { tiles: data?.tiles || {}, items: data?.items || {} };
+                    const m = {
+                      regionSize: Number(data?.regionSize) || 8,
+                      regions: data?.regions && typeof data.regions === "object" ? data.regions : null,
+                      items: data?.items || {},
+                    };
                     manifests.set(root, m);
                     return m;
                   })
                   .catch(() => {
-                    const empty = { tiles: {}, items: {} };
+                    const empty = { regionSize: 8, regions: null, items: {} };
                     manifests.set(root, empty);
                     return empty;
                   })
@@ -81,15 +123,79 @@
               reload(root) {
                 manifests.delete(root);
                 manifestPromises.delete(root);
+                // Evict cached region entries whose version may have changed on reload
+                for (const k of Array.from(regionCache.keys())) {
+                  if (k.startsWith(root + "|")) regionCache.delete(k);
+                }
                 return this.load(root, true);
               },
-              tileUrl(root, lod, x, z, baseUrl) {
-                const ver = manifests.get(root)?.tiles?.[`${lod}:${x}:${z}`];
-                return ver ? `${baseUrl}?v=${ver}` : baseUrl;
+              get(root) {
+                return manifests.get(root) || null;
               },
               itemUrl(root, key, baseUrl) {
                 const ver = manifests.get(root)?.items?.[key];
                 return ver ? `${baseUrl}?v=${ver}` : baseUrl;
+              },
+            };
+
+            window.__pp98Regions = {
+              async getTileEntry(root, lod, x, z) {
+                const m = manifests.get(root) || (await window.__pp98Manifest.load(root));
+                const rSize = m.regionSize || 8;
+                const rx = Math.floor(x / rSize);
+                const rz = Math.floor(z / rSize);
+                const rKey = `${lod}:${rx}:${rz}`;
+
+                // Instant client-side skip for non-existent/empty 8x8 regions (0 HTTP requests!)
+                if (m.regions !== null && !Object.prototype.hasOwnProperty.call(m.regions, rKey)) {
+                  return null;
+                }
+
+                const ver = m.regions ? m.regions[rKey] : 0;
+                const cacheKey = `${root}|${rKey}|${ver || 0}`;
+
+                if (regionCache.has(cacheKey)) {
+                  const pack = regionCache.get(cacheKey);
+                  // Touch LRU order
+                  regionCache.delete(cacheKey);
+                  regionCache.set(cacheKey, pack);
+                  return pack.get(`${x}:${z}`) || null;
+                }
+
+                let promise = regionInflight.get(cacheKey);
+                if (!promise) {
+                  const url = ver
+                    ? `${root}/region/${lod}/${rx}/${rz}.pack?v=${ver}`
+                    : `${root}/region/${lod}/${rx}/${rz}.pack`;
+                  promise = fetch(url)
+                    .then((r) => (r.ok ? r.arrayBuffer() : null))
+                    .then((buf) => {
+                      const pack = parseRegionPack(buf);
+                      regionCache.set(cacheKey, pack);
+                      while (regionCache.size > MAX_MEM_REGIONS) {
+                        const oldest = regionCache.keys().next().value;
+                        regionCache.delete(oldest);
+                      }
+                      return pack;
+                    })
+                    .catch(() => new Map())
+                    .finally(() => regionInflight.delete(cacheKey));
+                  regionInflight.set(cacheKey, promise);
+                }
+
+                const pack = await promise;
+                return pack.get(`${x}:${z}`) || null;
+              },
+              async loadHiresTile(root, x, z) {
+                const entry = await this.getTileEntry(root, 0, x, z);
+                if (!entry) return null;
+                return await decompressEntry(entry);
+              },
+              async loadLowresBlobUrl(root, lod, x, z) {
+                const entry = await this.getTileEntry(root, lod, x, z);
+                if (!entry) return null;
+                const buf = entry.comp === 0 ? entry.bytes : await decompressEntry(entry);
+                return URL.createObjectURL(new Blob([buf], { type: "image/png" }));
               },
             };
 
@@ -167,7 +273,7 @@
           })();
         </script>
       <script src="./theme/crt-filter.js?v=3"></script>
-      <script type="module" crossorigin src="./assets/index-pp98-3.js"></script>
+      <script type="module" crossorigin src="./assets/index-pp98-4.js"></script>
       <link rel="stylesheet" href="./assets/index-ffb10548.css">
       <link rel="stylesheet" href="./theme/win98.css?v=4">
     </head>

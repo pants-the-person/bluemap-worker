@@ -788,9 +788,9 @@
           if (bm?.mapViewer?.map) {
             const root = bm.mapViewer.map.data.mapDataRoot;
             const m = await window.__pp98Manifest?.reload?.(root);
-            const count = m ? Object.keys(m.tiles || {}).length : 0;
+            const count = m?.regions ? Object.keys(m.regions).length : 0;
             await bm.switchMap(bm.mapViewer.map.data.id);
-            showToast(`Map updated (${count} changed tiles tracked)`);
+            showToast(`Map synced (${count} 8x8 regions indexed)`);
           }
         });
         addItem("Reset Camera", () => bm?.resetCamera?.());

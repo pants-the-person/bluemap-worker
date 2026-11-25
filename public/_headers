@@ -10,6 +10,9 @@
 /theme/win98.js
   Cache-Control: public, max-age=300
 
+/theme/crt-filter.js
+  Cache-Control: public, max-age=300
+
 /lang/*
   Cache-Control: public, max-age=2592000
 

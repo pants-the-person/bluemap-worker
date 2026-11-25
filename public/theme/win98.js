@@ -20,8 +20,19 @@
   ];
 
   const VALID_SCHEMES = new Set(SCHEMES.map((s) => s.id));
+  const CRT_PRESETS = [
+    { id: "off", label: "Off" },
+    { id: "subtle", label: "Subtle" },
+    { id: "trinitron", label: "Trinitron (Default)" },
+    { id: "heavy", label: "Heavy Retro" },
+  ];
+  const VALID_CRT_PRESETS = new Set(CRT_PRESETS.map((p) => p.id));
   const STORAGE_SCHEME_KEY = "pp98-bluemap:scheme";
   const STORAGE_CRT_KEY = "pp98-bluemap:crt";
+  const STORAGE_CRT_PRESET_KEY = "pp98-bluemap:crt-preset";
+
+  let crtFilterInstance = null;
+  let activeCrtPreset = "trinitron";
 
   const GLOBE_ICON_SVG = `<svg class="pp98-titlebar-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <rect x="4" y="1" width="8" height="1" fill="#000"/>
@@ -66,12 +77,61 @@
     }
   }
 
-  function applyCrt(enabled, persist = true) {
-    const flag = enabled ? "true" : "false";
-    document.documentElement.setAttribute("data-crt", flag);
+  function getSourceCanvas() {
+    const bm = window.bluemap;
+    if (bm?.mapViewer?.renderer?.domElement) return bm.mapViewer.renderer.domElement;
+    return document.querySelector("#map-container > canvas:not(.pp98-crt-canvas)");
+  }
+
+  function ensureCrtFilter() {
+    if (crtFilterInstance) return crtFilterInstance;
+    const canvas = getSourceCanvas();
+    if (!canvas || typeof window.CRTFilterWebGL !== "function") return null;
+    const instance = new window.CRTFilterWebGL(canvas);
+    if (instance.supported) {
+      crtFilterInstance = instance;
+      document.documentElement.classList.remove("pp98-crt-fallback");
+      return instance;
+    }
+    // WebGL overlay unavailable — enable CSS fallback
+    document.documentElement.classList.add("pp98-crt-fallback");
+    return null;
+  }
+
+  function syncCrtFilter() {
+    const enabled = activeCrtPreset !== "off";
+    document.documentElement.setAttribute("data-crt", enabled ? "true" : "false");
+    document.documentElement.setAttribute("data-crt-preset", activeCrtPreset);
+
+    const filter = ensureCrtFilter();
+    if (filter) {
+      if (enabled) {
+        filter.setPreset(activeCrtPreset);
+        filter.start();
+      } else {
+        filter.stop();
+      }
+    } else if (enabled) {
+      document.documentElement.classList.add("pp98-crt-fallback");
+    }
+  }
+
+  function normalizeCrtValue(val) {
+    if (val === false || val === "false" || val === "0" || val === "off") return "off";
+    if (val === true || val === "true" || val === "1") return "trinitron";
+    if (typeof val === "string" && VALID_CRT_PRESETS.has(val.toLowerCase())) {
+      return val.toLowerCase();
+    }
+    return "trinitron";
+  }
+
+  function applyCrt(presetOrBool, persist = true) {
+    activeCrtPreset = normalizeCrtValue(presetOrBool);
+    syncCrtFilter();
     if (persist) {
       try {
-        localStorage.setItem(STORAGE_CRT_KEY, flag);
+        localStorage.setItem(STORAGE_CRT_KEY, activeCrtPreset === "off" ? "false" : "true");
+        localStorage.setItem(STORAGE_CRT_PRESET_KEY, activeCrtPreset);
       } catch {
         // ignore
       }
@@ -82,8 +142,8 @@
     return document.documentElement.getAttribute("data-scheme") || "standard";
   }
 
-  function getCrt() {
-    return document.documentElement.getAttribute("data-crt") === "true";
+  function getCrtPreset() {
+    return activeCrtPreset;
   }
 
   function initEnvironment() {
@@ -96,25 +156,30 @@
     const paramCrt = params.get("crt");
 
     let savedScheme = "standard";
-    let savedCrt = true;
+    let savedCrtPreset = "trinitron";
     try {
       savedScheme = localStorage.getItem(STORAGE_SCHEME_KEY) || "standard";
-      const storedCrt = localStorage.getItem(STORAGE_CRT_KEY);
-      savedCrt = storedCrt === null ? true : storedCrt === "true";
+      const storedPreset = localStorage.getItem(STORAGE_CRT_PRESET_KEY);
+      const storedFlag = localStorage.getItem(STORAGE_CRT_KEY);
+      if (storedPreset && VALID_CRT_PRESETS.has(storedPreset)) {
+        savedCrtPreset = storedPreset;
+      } else if (storedFlag !== null) {
+        savedCrtPreset = storedFlag === "true" ? "trinitron" : "off";
+      }
     } catch {
       // ignore
     }
 
     applyScheme(paramScheme || savedScheme, false);
-    applyCrt(paramCrt !== null ? paramCrt === "true" || paramCrt === "1" : savedCrt, false);
+    applyCrt(paramCrt !== null ? paramCrt : savedCrtPreset, false);
 
     // Allow Pants Place 98 parent window to sync color scheme & CRT live via postMessage
     window.addEventListener("message", (event) => {
       const data = event.data;
       if (!data || typeof data !== "object") return;
-      if (data.type === "pp98:theme" || data.type === "pp98:scheme" || "scheme" in data) {
+      if (data.type === "pp98:theme" || data.type === "pp98:scheme" || "scheme" in data || "crt" in data) {
         if (typeof data.scheme === "string") applyScheme(data.scheme, false);
-        if (typeof data.crt === "boolean") applyCrt(data.crt, false);
+        if (typeof data.crt === "boolean" || typeof data.crt === "string") applyCrt(data.crt, false);
       }
     });
   }
@@ -354,7 +419,11 @@
           addItem(s.label, () => applyScheme(s.id, true), { bullet: curScheme === s.id });
         }
         addSep();
-        addItem("CRT Scanlines", () => applyCrt(!getCrt(), true), { checked: getCrt() });
+        addHeader("CRT Monitor (WebGL)");
+        const curCrt = getCrtPreset();
+        for (const p of CRT_PRESETS) {
+          addItem(p.label, () => applyCrt(p.id, true), { bullet: curCrt === p.id });
+        }
       } else if (menuId === "maps") {
         const activeId = bm?.mapViewer?.map?.data?.id;
         const maps = bm?.appState?.maps || [];
@@ -697,9 +766,14 @@
     setInterval(updateStatus, 500);
 
     // Ensure Three.js WebGL renderer matches the new sunken viewport dimensions
+    // and attach the WebGL CRT post-processing overlay onto the map canvas.
     requestAnimationFrame(() => {
       triggerResize();
-      setTimeout(triggerResize, 250);
+      syncCrtFilter();
+      setTimeout(() => {
+        triggerResize();
+        syncCrtFilter();
+      }, 250);
     });
   }
 

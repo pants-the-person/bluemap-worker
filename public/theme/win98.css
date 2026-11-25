@@ -646,9 +646,22 @@ body {
   fill: var(--text-fg) !important;
 }
 
+/* Preserve rich multi-color Win98 pixel-art icons once swapped in */
+.svg-button svg[data-pp98-icon] {
+  width: 16px !important;
+  height: 16px !important;
+  fill: initial !important;
+  image-rendering: pixelated;
+  shape-rendering: crispEdges;
+}
+
 .svg-button:active svg,
 .svg-button.active svg {
   transform: translate(calc(-50% + 1px), calc(-50% + 1px)) !important;
+}
+
+.svg-button:not(:has(svg[data-pp98-icon])):active svg,
+.svg-button:not(:has(svg[data-pp98-icon])).active svg {
   fill: var(--navy) !important;
 }
 
@@ -1470,6 +1483,169 @@ body {
   font-family: var(--font-ui);
   font-size: 11px;
   pointer-events: none;
+}
+
+/* Hide BlueMap's redundant built-in Theme group in Settings (Win98 schemes live in View menu) */
+[data-pp98-hidden="1"] {
+  display: none !important;
+}
+
+/* ==========================================================================
+   Win98 Segmented Progress Bar Loading Dialog (shown while textures.json loads)
+   ========================================================================== */
+.pp98-loading-backdrop {
+  position: fixed;
+  top: var(--pp98-top-chrome);
+  left: var(--pp98-frame-pad);
+  right: var(--pp98-frame-pad);
+  bottom: var(--pp98-bottom-chrome);
+  z-index: 10040;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--desktop);
+  pointer-events: auto;
+}
+
+.pp98-loading-backdrop.hidden {
+  display: none !important;
+}
+
+.pp98-loading-window {
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  padding: 3px;
+  background: var(--surface);
+  color: var(--text-fg);
+  box-shadow: var(--bevel-window), 4px 4px 0 rgba(0, 0, 0, 0.35);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+
+.pp98-loading-body {
+  padding: 12px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pp98-loading-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pp98-loading-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  image-rendering: pixelated;
+}
+
+.pp98-loading-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pp98-loading-heading {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.pp98-loading-sub {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pp98-loading-pct {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.pp98-progress-track {
+  height: 18px;
+  padding: 2px;
+  background: var(--surface);
+  box-shadow: var(--bevel-sunken);
+  overflow: hidden;
+}
+
+.pp98-progress-fill {
+  height: 100%;
+  width: 12%;
+  background: repeating-linear-gradient(
+    to right,
+    var(--navy) 0px,
+    var(--navy) 8px,
+    transparent 8px,
+    transparent 10px
+  );
+  transition: width 120ms steps(8, end);
+}
+
+/* ==========================================================================
+   Win98 Modal Inputs & Favorites Manager List
+   ========================================================================== */
+.pp98-field-label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.pp98-text-field {
+  width: 100%;
+  height: 22px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 0;
+  background: var(--input-bg);
+  color: var(--input-fg);
+  box-shadow: var(--bevel-sunken);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+
+.pp98-fav-list {
+  max-height: 180px;
+  overflow-y: auto;
+  background: var(--input-bg);
+  color: var(--input-fg);
+  box-shadow: var(--bevel-sunken);
+  padding: 2px;
+  margin-top: 6px;
+}
+
+.pp98-fav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px;
+}
+
+.pp98-fav-row:hover {
+  background: var(--selection);
+  color: var(--selection-text);
+}
+
+.pp98-fav-del {
+  min-width: 52px;
+  min-height: 19px;
+  padding: 0 6px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text-fg);
+  box-shadow: var(--bevel-raised);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  cursor: default;
+}
+
+.pp98-fav-del:active {
+  box-shadow: var(--bevel-sunken);
 }
 
 /* ==========================================================================

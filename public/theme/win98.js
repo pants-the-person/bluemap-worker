@@ -30,6 +30,176 @@
   const STORAGE_SCHEME_KEY = "pp98-bluemap:scheme";
   const STORAGE_CRT_KEY = "pp98-bluemap:crt";
   const STORAGE_CRT_PRESET_KEY = "pp98-bluemap:crt-preset";
+  const STORAGE_FAVORITES_KEY = "pp98-bluemap:favorites";
+
+  // Curated server landmarks shown in the Win98 Favorites menu
+  const DEFAULT_FAVORITES = [
+    { name: "Overworld Spawn", map: "world", x: 14429, y: 80, z: -18450, distance: 320, rotation: 0, angle: 0.55, state: "perspective" },
+    { name: "Nether Spawn", map: "world_the_nether", x: 14429, y: 80, z: -18450, distance: 320, rotation: 0, angle: 0.55, state: "perspective" },
+    { name: "The End", map: "world_the_end", x: 14429, y: 80, z: -18450, distance: 320, rotation: 0, angle: 0.55, state: "perspective" },
+  ];
+
+  // Crisp 16x16 Windows 98 pixel-art toolbar icons (exact 16x16 grid, crispEdges)
+  const WIN98_ICONS = {
+    maps: `
+      <rect x="1" y="3" width="14" height="10" fill="#000"/>
+      <rect x="2" y="4" width="4" height="8" fill="#ffffc0"/>
+      <rect x="6" y="4" width="4" height="8" fill="#e8e0a0"/>
+      <rect x="10" y="4" width="4" height="8" fill="#ffffc0"/>
+      <rect x="2" y="5" width="3" height="3" fill="#00a800"/>
+      <rect x="3" y="8" width="2" height="3" fill="#0080c0"/>
+      <rect x="6" y="6" width="4" height="4" fill="#008000"/>
+      <rect x="7" y="4" width="2" height="2" fill="#0080c0"/>
+      <rect x="11" y="5" width="3" height="4" fill="#00a800"/>
+      <rect x="10" y="9" width="3" height="3" fill="#0080c0"/>
+      <rect x="5" y="4" width="1" height="8" fill="#808040"/>
+      <rect x="10" y="4" width="1" height="8" fill="#808040"/>
+    `,
+    markers: `
+      <rect x="6" y="1" width="4" height="1" fill="#000"/>
+      <rect x="5" y="2" width="1" height="4" fill="#000"/><rect x="10" y="2" width="1" height="4" fill="#000"/>
+      <rect x="6" y="6" width="4" height="1" fill="#000"/>
+      <rect x="6" y="2" width="4" height="4" fill="#ff0000"/>
+      <rect x="6" y="2" width="2" height="2" fill="#ff8080"/>
+      <rect x="7" y="7" width="2" height="5" fill="#808080"/>
+      <rect x="7" y="12" width="1" height="3" fill="#000"/>
+    `,
+    players: `
+      <rect x="5" y="2" width="6" height="5" fill="#000"/>
+      <rect x="6" y="3" width="4" height="3" fill="#f0c090"/>
+      <rect x="6" y="2" width="4" height="1" fill="#603810"/>
+      <rect x="3" y="8" width="10" height="6" fill="#000"/>
+      <rect x="4" y="9" width="8" height="4" fill="#008080"/>
+      <rect x="6" y="9" width="4" height="4" fill="#00a8a8"/>
+    `,
+    dayNight: `
+      <rect x="7" y="1" width="2" height="2" fill="#806000"/>
+      <rect x="7" y="13" width="2" height="2" fill="#806000"/>
+      <rect x="1" y="7" width="2" height="2" fill="#806000"/>
+      <rect x="13" y="7" width="2" height="2" fill="#806000"/>
+      <rect x="3" y="3" width="2" height="2" fill="#806000"/>
+      <rect x="11" y="3" width="2" height="2" fill="#806000"/>
+      <rect x="3" y="11" width="2" height="2" fill="#806000"/>
+      <rect x="11" y="11" width="2" height="2" fill="#806000"/>
+      <rect x="5" y="4" width="6" height="8" fill="#000"/>
+      <rect x="4" y="5" width="8" height="6" fill="#000"/>
+      <rect x="5" y="5" width="6" height="6" fill="#ffff00"/>
+      <rect x="8" y="5" width="3" height="6" fill="#000080"/>
+      <rect x="9" y="6" width="1" height="1" fill="#ffff80"/>
+      <rect x="10" y="9" width="1" height="1" fill="#ffff80"/>
+    `,
+    perspective: `
+      <rect x="6" y="1" width="4" height="1" fill="#000"/>
+      <rect x="4" y="2" width="2" height="1" fill="#000"/><rect x="10" y="2" width="2" height="1" fill="#000"/>
+      <rect x="2" y="3" width="2" height="1" fill="#000"/><rect x="12" y="3" width="2" height="1" fill="#000"/>
+      <rect x="1" y="4" width="1" height="7" fill="#000"/><rect x="14" y="4" width="1" height="7" fill="#000"/>
+      <rect x="2" y="11" width="2" height="1" fill="#000"/><rect x="12" y="11" width="2" height="1" fill="#000"/>
+      <rect x="4" y="12" width="2" height="1" fill="#000"/><rect x="10" y="12" width="2" height="1" fill="#000"/>
+      <rect x="6" y="13" width="4" height="1" fill="#000"/>
+      <rect x="6" y="2" width="4" height="5" fill="#40c040"/>
+      <rect x="4" y="3" width="8" height="3" fill="#40c040"/>
+      <rect x="2" y="4" width="12" height="2" fill="#209020"/>
+      <rect x="2" y="6" width="6" height="5" fill="#a06838"/>
+      <rect x="4" y="11" width="4" height="1" fill="#a06838"/>
+      <rect x="8" y="6" width="6" height="5" fill="#704420"/>
+      <rect x="8" y="11" width="4" height="1" fill="#704420"/>
+      <rect x="7" y="7" width="1" height="6" fill="#000"/>
+    `,
+    flat: `
+      <rect x="1" y="2" width="14" height="12" fill="#000"/>
+      <rect x="2" y="3" width="12" height="10" fill="#ffffff"/>
+      <rect x="2" y="3" width="4" height="4" fill="#40b040"/>
+      <rect x="6" y="3" width="4" height="4" fill="#80d060"/>
+      <rect x="10" y="3" width="4" height="4" fill="#4090d0"/>
+      <rect x="2" y="7" width="4" height="3" fill="#80d060"/>
+      <rect x="6" y="7" width="4" height="3" fill="#d0c070"/>
+      <rect x="10" y="7" width="4" height="3" fill="#4090d0"/>
+      <rect x="2" y="10" width="4" height="3" fill="#4090d0"/>
+      <rect x="6" y="10" width="4" height="3" fill="#40b040"/>
+      <rect x="10" y="10" width="4" height="3" fill="#80d060"/>
+      <rect x="5" y="3" width="1" height="10" fill="#808080"/>
+      <rect x="9" y="3" width="1" height="10" fill="#808080"/>
+      <rect x="2" y="6" width="12" height="1" fill="#808080"/>
+      <rect x="2" y="9" width="12" height="1" fill="#808080"/>
+    `,
+    freeFlight: `
+      <rect x="12" y="2" width="2" height="2" fill="#000"/>
+      <rect x="9" y="3" width="3" height="2" fill="#000"/>
+      <rect x="6" y="4" width="3" height="2" fill="#000"/>
+      <rect x="2" y="5" width="4" height="2" fill="#000"/>
+      <rect x="4" y="7" width="3" height="2" fill="#000"/>
+      <rect x="6" y="9" width="2" height="4" fill="#000"/>
+      <rect x="8" y="8" width="2" height="4" fill="#000"/>
+      <rect x="10" y="5" width="2" height="6" fill="#000"/>
+      <rect x="12" y="4" width="1" height="5" fill="#000"/>
+      <rect x="4" y="6" width="8" height="1" fill="#ffffff"/>
+      <rect x="7" y="5" width="5" height="1" fill="#ffffff"/>
+      <rect x="10" y="4" width="2" height="1" fill="#ffffff"/>
+      <rect x="7" y="7" width="4" height="2" fill="#c0c0c0"/>
+      <rect x="7" y="9" width="2" height="2" fill="#808080"/>
+    `,
+    resetCamera: `
+      <rect x="7" y="1" width="2" height="1" fill="#000"/>
+      <rect x="5" y="2" width="6" height="1" fill="#000"/>
+      <rect x="3" y="3" width="10" height="1" fill="#000"/>
+      <rect x="1" y="4" width="14" height="2" fill="#000"/>
+      <rect x="7" y="2" width="2" height="1" fill="#c00000"/>
+      <rect x="5" y="3" width="6" height="1" fill="#ff0000"/>
+      <rect x="3" y="4" width="10" height="2" fill="#c00000"/>
+      <rect x="2" y="6" width="12" height="8" fill="#000"/>
+      <rect x="3" y="6" width="10" height="7" fill="#ffffc0"/>
+      <rect x="6" y="8" width="4" height="5" fill="#804000"/>
+      <rect x="7" y="9" width="2" height="4" fill="#c08020"/>
+      <rect x="4" y="7" width="2" height="2" fill="#0080c0"/>
+      <rect x="10" y="7" width="2" height="2" fill="#0080c0"/>
+    `,
+    compass: `
+      <rect x="5" y="1" width="6" height="1" fill="#000"/>
+      <rect x="3" y="2" width="2" height="1" fill="#000"/><rect x="11" y="2" width="2" height="1" fill="#000"/>
+      <rect x="2" y="3" width="1" height="2" fill="#000"/><rect x="13" y="3" width="1" height="2" fill="#000"/>
+      <rect x="1" y="5" width="1" height="6" fill="#000"/><rect x="14" y="5" width="1" height="6" fill="#000"/>
+      <rect x="2" y="11" width="1" height="2" fill="#000"/><rect x="13" y="11" width="1" height="2" fill="#000"/>
+      <rect x="3" y="13" width="2" height="1" fill="#000"/><rect x="11" y="13" width="2" height="1" fill="#000"/>
+      <rect x="5" y="14" width="6" height="1" fill="#000"/>
+      <rect x="5" y="2" width="6" height="12" fill="#ffffff"/>
+      <rect x="3" y="3" width="10" height="10" fill="#ffffff"/>
+      <rect x="2" y="5" width="12" height="6" fill="#ffffff"/>
+      <rect x="7" y="3" width="2" height="5" fill="#ff0000"/>
+      <rect x="6" y="5" width="4" height="3" fill="#ff0000"/>
+      <rect x="6" y="8" width="4" height="3" fill="#404040"/>
+      <rect x="7" y="8" width="2" height="5" fill="#404040"/>
+      <rect x="7" y="7" width="2" height="2" fill="#000"/>
+    `,
+    zoomIn: `
+      <rect x="4" y="1" width="5" height="1" fill="#000"/>
+      <rect x="2" y="2" width="2" height="1" fill="#000"/><rect x="9" y="2" width="2" height="1" fill="#000"/>
+      <rect x="1" y="3" width="1" height="5" fill="#000"/><rect x="11" y="3" width="1" height="5" fill="#000"/>
+      <rect x="2" y="8" width="2" height="1" fill="#000"/><rect x="9" y="8" width="2" height="1" fill="#000"/>
+      <rect x="4" y="9" width="5" height="1" fill="#000"/>
+      <rect x="4" y="2" width="5" height="7" fill="#c0f0ff"/>
+      <rect x="2" y="3" width="9" height="5" fill="#c0f0ff"/>
+      <rect x="6" y="3" width="1" height="5" fill="#000"/>
+      <rect x="4" y="5" width="5" height="1" fill="#000"/>
+      <rect x="10" y="9" width="2" height="2" fill="#000"/>
+      <rect x="11" y="10" width="2" height="2" fill="#000"/>
+      <rect x="12" y="11" width="2" height="2" fill="#000"/>
+      <rect x="13" y="12" width="2" height="2" fill="#000"/>
+    `,
+    zoomOut: `
+      <rect x="4" y="1" width="5" height="1" fill="#000"/>
+      <rect x="2" y="2" width="2" height="1" fill="#000"/><rect x="9" y="2" width="2" height="1" fill="#000"/>
+      <rect x="1" y="3" width="1" height="5" fill="#000"/><rect x="11" y="3" width="1" height="5" fill="#000"/>
+      <rect x="2" y="8" width="2" height="1" fill="#000"/><rect x="9" y="8" width="2" height="1" fill="#000"/>
+      <rect x="4" y="9" width="5" height="1" fill="#000"/>
+      <rect x="4" y="2" width="5" height="7" fill="#c0f0ff"/>
+      <rect x="2" y="3" width="9" height="5" fill="#c0f0ff"/>
+      <rect x="4" y="5" width="5" height="1" fill="#000"/>
+      <rect x="10" y="9" width="2" height="2" fill="#000"/>
+      <rect x="11" y="10" width="2" height="2" fill="#000"/>
+      <rect x="12" y="11" width="2" height="2" fill="#000"/>
+      <rect x="13" y="12" width="2" height="2" fill="#000"/>
+    `,
+  };
 
   let crtFilterInstance = null;
   let activeCrtPreset = "trinitron";
@@ -194,6 +364,192 @@
     setTimeout(() => el.remove(), 2200);
   }
 
+  function loadUserFavorites() {
+    try {
+      const raw = localStorage.getItem(STORAGE_FAVORITES_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveUserFavorites(list) {
+    try {
+      localStorage.setItem(STORAGE_FAVORITES_KEY, JSON.stringify(list));
+    } catch {
+      // ignore
+    }
+  }
+
+  async function jumpToFavorite(fav) {
+    const bm = window.bluemap;
+    if (!bm || !fav) return;
+    const currentMapId = bm.mapViewer?.map?.data?.id;
+    if (fav.map && fav.map !== currentMapId) {
+      try {
+        await bm.switchMap(fav.map);
+      } catch {
+        showToast(`Could not switch to map "${fav.map}"`);
+        return;
+      }
+    }
+    const cm = bm.mapViewer?.controlsManager;
+    if (!cm) return;
+    if (fav.state === "flat") bm.setFlatView?.(0);
+    else if (fav.state === "free") bm.setFreeFlight?.(0, fav.y ?? 80);
+    else bm.setPerspectiveView?.(0);
+
+    cm.position.set(Number(fav.x) || 0, Number(fav.y) || 0, Number(fav.z) || 0);
+    if (Number.isFinite(fav.distance)) cm.distance = fav.distance;
+    if (Number.isFinite(fav.rotation)) cm.rotation = fav.rotation;
+    if (Number.isFinite(fav.angle)) cm.angle = fav.angle;
+    bm.updatePageAddress?.();
+    bm.mapViewer?.updateLoadedMapArea?.();
+    showToast(`Jumped to ${fav.name}`);
+  }
+
+  function showAddFavoriteModal() {
+    if (document.querySelector(".pp98-modal-backdrop")) return;
+    const bm = window.bluemap;
+    const mapId = bm?.mapViewer?.map?.data?.id || "world";
+    const mapName = bm?.mapViewer?.map?.data?.name || mapId;
+    const cm = bm?.mapViewer?.controlsManager;
+    const x = Math.round(cm?.position?.x ?? 0);
+    const y = Math.round(cm?.position?.y ?? 64);
+    const z = Math.round(cm?.position?.z ?? 0);
+    const distance = Math.round(cm?.distance ?? 350);
+    const rotation = Number((cm?.rotation ?? 0).toFixed(2));
+    const angle = Number((cm?.angle ?? 0.55).toFixed(2));
+    const state = bm?.appState?.controls?.state || "perspective";
+    const defaultName = `${mapName} (${x}, ${z})`;
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "pp98-modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="pp98-modal" role="dialog" aria-modal="true" aria-label="Add to Favorites">
+        <div class="pp98-modal-titlebar">
+          <span>Add to Favorites</span>
+          <button type="button" class="pp98-winbtn" data-close aria-label="Close">
+            <svg viewBox="0 0 9 9"><path d="M1 0h1v1h1v1h1v1h1V2h1V1h1V0h1v1H7v1H6v1H5v1h1v1h1v1h1v1H7V7H6V6H5V5H4v1H3v1H2v1H1V7h1V6h1V5h1V4H3V3H2V2H1V1h0V0z"/></svg>
+          </button>
+        </div>
+        <div class="pp98-modal-body" style="display:block;">
+          <label class="pp98-field-label" for="pp98-fav-name">Bookmark Name:</label>
+          <input id="pp98-fav-name" type="text" class="pp98-text-field" maxlength="48" />
+          <div style="margin-top:8px; color:var(--text-muted);">
+            Location: ${mapId} — X: ${x}, Y: ${y}, Z: ${z} (${state})
+          </div>
+        </div>
+        <div class="pp98-modal-footer">
+          <button type="button" class="pp98-btn default" data-save>OK</button>
+          <button type="button" class="pp98-btn" data-close>Cancel</button>
+        </div>
+      </div>
+    `;
+
+    const input = backdrop.querySelector("#pp98-fav-name");
+    input.value = defaultName;
+
+    const close = () => {
+      backdrop.remove();
+      window.removeEventListener("keydown", onKey);
+    };
+
+    const save = () => {
+      const name = input.value.trim() || defaultName;
+      const list = loadUserFavorites();
+      list.push({ name, map: mapId, x, y, z, distance, rotation, angle, state });
+      saveUserFavorites(list);
+      close();
+      showToast(`Saved "${name}" to Favorites`);
+    };
+
+    const onKey = (e) => {
+      if (e.key === "Escape") close();
+      else if (e.key === "Enter") save();
+    };
+    window.addEventListener("keydown", onKey);
+
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop || e.target.closest("[data-close]")) close();
+      else if (e.target.closest("[data-save]")) save();
+    });
+
+    document.body.appendChild(backdrop);
+    input.focus();
+    input.select();
+  }
+
+  function showOrganizeFavoritesModal() {
+    if (document.querySelector(".pp98-modal-backdrop")) return;
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "pp98-modal-backdrop";
+
+    const render = () => {
+      const list = loadUserFavorites();
+      const rows = list.length
+        ? list
+            .map(
+              (f, idx) => `
+                <div class="pp98-fav-row">
+                  <span><strong>${f.name.replace(/[<>&"]/g, "")}</strong> <span style="opacity:0.75">(${f.map}: ${f.x}, ${f.z})</span></span>
+                  <button type="button" class="pp98-fav-del" data-del="${idx}">Delete</button>
+                </div>
+              `,
+            )
+            .join("")
+        : `<div style="padding:10px; color:var(--text-muted); text-align:center;">No custom bookmarks saved yet.</div>`;
+
+      backdrop.innerHTML = `
+        <div class="pp98-modal" role="dialog" aria-modal="true" aria-label="Organize Favorites">
+          <div class="pp98-modal-titlebar">
+            <span>Organize Favorites</span>
+            <button type="button" class="pp98-winbtn" data-close aria-label="Close">
+              <svg viewBox="0 0 9 9"><path d="M1 0h1v1h1v1h1v1h1V2h1V1h1V0h1v1H7v1H6v1H5v1h1v1h1v1h1v1H7V7H6V6H5V5H4v1H3v1H2v1H1V7h1V6h1V5h1V4H3V3H2V2H1V1h0V0z"/></svg>
+            </button>
+          </div>
+          <div class="pp98-modal-body" style="display:block;">
+            <div>Saved bookmarks (stored locally in your browser):</div>
+            <div class="pp98-fav-list">${rows}</div>
+          </div>
+          <div class="pp98-modal-footer">
+            <button type="button" class="pp98-btn default" data-close>Close</button>
+          </div>
+        </div>
+      `;
+    };
+
+    const close = () => {
+      backdrop.remove();
+      window.removeEventListener("keydown", onKey);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+
+    backdrop.addEventListener("click", (e) => {
+      const del = e.target.closest("[data-del]");
+      if (del) {
+        const idx = Number(del.getAttribute("data-del"));
+        const list = loadUserFavorites();
+        if (idx >= 0 && idx < list.length) {
+          list.splice(idx, 1);
+          saveUserFavorites(list);
+          render();
+        }
+        return;
+      }
+      if (e.target === backdrop || e.target.closest("[data-close]")) close();
+    });
+
+    render();
+    document.body.appendChild(backdrop);
+  }
+
   function showAboutModal() {
     if (document.querySelector(".pp98-modal-backdrop")) return;
     const bm = window.bluemap;
@@ -346,16 +702,17 @@
       }
     });
 
-    // 3. Menu bar (native Win98 File / View / Maps / Help)
+    // 3. Menu bar (native Win98 File / View / Maps / Favorites / Help)
     const menubar = document.createElement("nav");
     menubar.className = "pp98-menubar";
     menubar.setAttribute("aria-label", "Application menu");
 
     const menus = [
-      { id: "file", label: "<u>F</u>ile" },
-      { id: "view", label: "<u>V</u>iew" },
-      { id: "maps", label: "<u>M</u>aps" },
-      { id: "help", label: "<u>H</u>elp" },
+      { id: "file", label: "<u>F</u>ile", key: "f" },
+      { id: "view", label: "<u>V</u>iew", key: "v" },
+      { id: "maps", label: "<u>M</u>aps", key: "m" },
+      { id: "favorites", label: "F<u>a</u>vorites", key: "a" },
+      { id: "help", label: "<u>H</u>elp", key: "h" },
     ];
 
     let openMenuId = null;
@@ -418,7 +775,7 @@
           patchScreenshot();
           bm?.takeScreenshot?.();
           showToast(activeCrtPreset !== "off" ? "Saved CRT screenshot (PNG)" : "Saved screenshot (PNG)");
-        });
+        }, { shortcut: "Ctrl+S" });
         addItem("Copy Map Link", async () => {
           try {
             await navigator.clipboard.writeText(window.location.href);
@@ -463,9 +820,10 @@
         addItem("Free Flight", () => bm?.setFreeFlight?.(), { bullet: state === "free" });
         addSep();
         addItem("Toggle Day / Night", () => {
-          const viewer = bm?.mapViewer;
-          if (viewer?.data) {
-            viewer.data.sunlight = viewer.data.sunlight < 0.5 ? 1 : 0.1;
+          const u = bm?.mapViewer?.data?.uniforms?.sunlightStrength;
+          if (u) {
+            u.value = u.value > 0.6 ? 0.25 : 1;
+            bm?.mapViewer?.redraw?.();
           }
         });
         addSep();
@@ -490,12 +848,30 @@
             addItem(m.name || m.id, () => bm?.switchMap?.(m.id), { bullet: m.id === activeId });
           }
         }
+      } else if (menuId === "favorites") {
+        addItem("Add Current Location...", showAddFavoriteModal);
+        addItem("Organize Favorites...", showOrganizeFavoritesModal);
+        addSep();
+        addHeader("Server Landmarks");
+        for (const fav of DEFAULT_FAVORITES) {
+          addItem(fav.name, () => jumpToFavorite(fav), { shortcut: `${fav.x}, ${fav.z}` });
+        }
+        const userFavs = loadUserFavorites();
+        if (userFavs.length > 0) {
+          addSep();
+          addHeader("My Bookmarks");
+          for (const fav of userFavs) {
+            addItem(fav.name, () => jumpToFavorite(fav), { shortcut: `${fav.x}, ${fav.z}` });
+          }
+        }
       } else if (menuId === "help") {
         addItem("Controls & Info...", () => openSidebarPage("info", "Info"));
         addSep();
         addItem("About BlueMap 98...", showAboutModal);
       }
     }
+
+    const menuOpeners = new Map();
 
     for (const m of menus) {
       const root = document.createElement("div");
@@ -516,6 +892,7 @@
         trigger.classList.add("open");
         dropdown.classList.add("open");
       };
+      menuOpeners.set(m.id, openThis);
 
       trigger.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -535,8 +912,53 @@
     document.addEventListener("click", (e) => {
       if (openMenuId && !menubar.contains(e.target)) closeMenus();
     });
+
+    // Windows 98 keyboard shortcuts & Alt-key menu mnemonics
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && openMenuId) closeMenus();
+      const tag = (e.target?.tagName || "").toLowerCase();
+      const inInput = tag === "input" || tag === "textarea" || e.target?.isContentEditable;
+
+      // Ctrl+S / Cmd+S -> instant CRT screenshot
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        closeMenus();
+        patchScreenshot();
+        window.bluemap?.takeScreenshot?.();
+        showToast(activeCrtPreset !== "off" ? "Saved CRT screenshot (PNG)" : "Saved screenshot (PNG)");
+        return;
+      }
+
+      if (inInput) return;
+
+      // Alt+F / Alt+V / Alt+M / Alt+A / Alt+H -> Win98 menu mnemonics
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        const k = e.key.toLowerCase();
+        const target = menus.find((m) => m.key === k);
+        if (target) {
+          e.preventDefault();
+          if (openMenuId === target.id) closeMenus();
+          else menuOpeners.get(target.id)?.();
+          return;
+        }
+      }
+
+      // Left / Right arrows cycle across open Win98 menus
+      if (openMenuId && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        const idx = menus.findIndex((m) => m.id === openMenuId);
+        const step = e.key === "ArrowRight" ? 1 : -1;
+        const next = menus[(idx + step + menus.length) % menus.length];
+        menuOpeners.get(next.id)?.();
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (openMenuId) {
+          closeMenus();
+        } else if (window.bluemap?.appState?.menu?.isOpen) {
+          window.bluemap.appState.menu.closeAll();
+        }
+      }
     });
 
     document.body.appendChild(menubar);
@@ -808,8 +1230,124 @@
       }
     }
 
+    function setSvgIcon(btn, iconKey) {
+      if (!btn) return;
+      const svg = btn.querySelector("svg");
+      if (!svg || svg.getAttribute("data-pp98-icon") === iconKey) return;
+      svg.setAttribute("viewBox", "0 0 16 16");
+      svg.setAttribute("shape-rendering", "crispEdges");
+      svg.setAttribute("data-pp98-icon", iconKey);
+      svg.innerHTML = WIN98_ICONS[iconKey];
+    }
+
+    function applyWin98UiPolish() {
+      // 1. Replace BlueMap's modern toolbar SVGs with crisp 16x16 Win98 pixel-art icons
+      const bar = document.querySelector(".control-bar");
+      if (bar) {
+        setSvgIcon(bar.querySelector(".day-night-switch"), "dayNight");
+        setSvgIcon(bar.querySelector(".compass"), "compass");
+
+        const viewBtns = bar.querySelectorAll(".controls-switch > .svg-button");
+        if (viewBtns[0]) setSvgIcon(viewBtns[0], "perspective");
+        if (viewBtns[1]) setSvgIcon(viewBtns[1], "flat");
+        if (viewBtns[2]) setSvgIcon(viewBtns[2], "freeFlight");
+
+        // Identify remaining direct toolbar buttons by position & title
+        const posInput = bar.querySelector(".pos-input");
+        const directBtns = Array.from(bar.children).filter(
+          (el) =>
+            el.classList.contains("svg-button") &&
+            !el.classList.contains("menu-button") &&
+            !el.classList.contains("day-night-switch") &&
+            !el.classList.contains("compass"),
+        );
+
+        for (const btn of directBtns) {
+          if (posInput && btn.nextElementSibling === posInput) {
+            setSvgIcon(btn, "resetCamera");
+            continue;
+          }
+          const t = (btn.getAttribute("title") || "").toLowerCase();
+          if (t.includes("reset") || t.includes("camera")) {
+            setSvgIcon(btn, "resetCamera");
+          } else if (t.includes("marker")) {
+            setSvgIcon(btn, "markers");
+          } else if (t.includes("player")) {
+            setSvgIcon(btn, "players");
+          } else {
+            setSvgIcon(btn, "maps");
+          }
+        }
+      }
+
+      // 2. Replace Zoom In / Zoom Out icons with 16x16 Win98 magnifying glasses
+      const zoomBtns = document.querySelectorAll("#zoom-buttons > .svg-button");
+      if (zoomBtns[0]) setSvgIcon(zoomBtns[0], "zoomIn");
+      if (zoomBtns[1]) setSvgIcon(zoomBtns[1], "zoomOut");
+
+      // 3. Hide BlueMap's redundant built-in Theme group in File -> Settings...
+      document.querySelectorAll(".side-menu .group").forEach((group) => {
+        if (group.getAttribute("data-pp98-hidden") === "1") return;
+        const labels = Array.from(group.querySelectorAll(".simple-button .label")).map((el) =>
+          (el.textContent || "").trim().toLowerCase(),
+        );
+        const title = (group.querySelector(":scope > .title")?.textContent || "").trim().toLowerCase();
+        const isThemeGroup =
+          title === "theme" ||
+          (labels.includes("light") && labels.includes("dark") && labels.some((l) => l.includes("contrast")));
+        if (isThemeGroup) {
+          group.setAttribute("data-pp98-hidden", "1");
+        }
+      });
+    }
+
+    function dismissLoadingDialog() {
+      const overlay = document.getElementById("pp98-loading");
+      if (!overlay || overlay.classList.contains("hidden")) return;
+      window.__pp98SetLoadProgress?.(100, "World loaded!");
+      setTimeout(() => overlay.classList.add("hidden"), 160);
+    }
+
+    function watchLoadingState() {
+      const bm = window.bluemap;
+      const check = () => {
+        const st = bm?.mapViewer?.data?.mapState;
+        if (st === "loaded" || st === "errored") {
+          dismissLoadingDialog();
+          return true;
+        }
+        return false;
+      };
+      if (check()) return;
+      bm?.events?.addEventListener?.("bluemapMapChanged", dismissLoadingDialog, { once: true });
+      const poll = setInterval(() => {
+        if (check()) clearInterval(poll);
+      }, 150);
+      // Failsafe so the loading dialog never blocks the screen permanently
+      setTimeout(() => {
+        clearInterval(poll);
+        dismissLoadingDialog();
+      }, 12000);
+    }
+
+    let polishQueued = false;
+    const schedulePolish = () => {
+      if (polishQueued) return;
+      polishQueued = true;
+      requestAnimationFrame(() => {
+        polishQueued = false;
+        applyWin98UiPolish();
+      });
+    };
+    const appEl = document.getElementById("app");
+    if (appEl && typeof MutationObserver !== "undefined") {
+      new MutationObserver(schedulePolish).observe(appEl, { childList: true, subtree: true });
+    }
+
     patchScreenshot();
     attachAdaptivePolling();
+    applyWin98UiPolish();
+    watchLoadingState();
     updateStatus();
     setInterval(updateStatus, 500);
 

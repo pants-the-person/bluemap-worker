@@ -553,6 +553,12 @@ body {
   border-left: none !important;
 }
 
+/* Hide original BlueMap hamburger button (all items moved to Win98 File menu) */
+.control-bar > .menu-button,
+.control-bar > .menu-button + .space {
+  display: none !important;
+}
+
 /* Classic Win98 toolbar grabber handle on the far left */
 .control-bar::before {
   content: "";
@@ -666,10 +672,17 @@ body {
 
 /* Coordinate Position Inputs -> Win98 Sunken Text Fields */
 .control-bar .pos-input {
-  max-width: 170px !important;
-  width: 170px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
   gap: 3px;
-  align-items: center;
+  flex-shrink: 0;
+}
+
+.position-input > * {
+  width: auto !important;
 }
 
 .position-input > :not(:first-child) {
@@ -678,34 +691,57 @@ body {
 
 .number-input {
   display: inline-flex !important;
-  align-items: center;
+  align-items: center !important;
+  width: 78px !important;
   min-height: 21px !important;
   height: 21px !important;
   background: var(--input-bg) !important;
   color: var(--input-fg) !important;
   box-shadow: var(--bevel-sunken) !important;
-  padding: 1px 3px !important;
+  padding: 0 4px !important;
+  line-height: 1 !important;
+  flex-shrink: 0;
+}
+
+.number-input > label {
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  gap: 3px;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 .number-input .label {
-  display: inline-block;
+  display: inline-flex !important;
+  align-items: center !important;
   width: auto !important;
-  padding: 0 3px 0 2px !important;
+  height: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
   color: var(--shadow) !important;
-  font-weight: 700;
-  font-size: 10px;
+  font-family: var(--font-ui) !important;
+  font-weight: 700 !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  text-transform: uppercase;
+  flex-shrink: 0;
 }
 
 .number-input input {
   width: 100% !important;
-  min-width: 0;
-  height: 16px !important;
-  line-height: 16px !important;
+  min-width: 0 !important;
+  height: 17px !important;
+  line-height: 17px !important;
+  margin: 0 !important;
+  padding: 0 !important;
   background: transparent !important;
   color: var(--input-fg) !important;
   font-family: var(--font-ui) !important;
   font-size: 11px !important;
-  padding: 0 2px !important;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
 }
 
 /* ==========================================================================
@@ -761,7 +797,7 @@ body {
   position: relative;
   height: 20px !important;
   line-height: 16px !important;
-  padding: 2px 24px !important;
+  padding: 2px 24px 2px 6px !important;
   margin: 0 0 3px 0 !important;
   background: linear-gradient(90deg, var(--navy), var(--cerulean)) !important;
   color: var(--white) !important;
@@ -775,10 +811,12 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Top-level sidebar page: put the close [X] button on the right like a native Win98 window */
 .side-menu > .menu-button {
   position: absolute !important;
   top: 6px !important;
-  left: 6px !important;
+  left: unset !important;
+  right: 6px !important;
   margin: 0 !important;
   width: 16px !important;
   min-width: 16px !important;
@@ -787,6 +825,16 @@ body {
   background: var(--surface) !important;
   box-shadow: var(--bevel-raised) !important;
   z-index: 2;
+}
+
+/* Nested sidebar page: keep Back button on the left and Close [X] on the right */
+.side-menu > .menu-button.back {
+  left: 6px !important;
+  right: unset !important;
+}
+
+.side-menu:has(> .menu-button.back) > .title {
+  padding-left: 26px !important;
 }
 
 .side-menu > .menu-button.full-close {
@@ -1432,9 +1480,8 @@ body {
     display: none;
   }
 
-  .control-bar .pos-input {
-    max-width: 130px !important;
-    width: 130px !important;
+  .number-input {
+    width: 64px !important;
   }
 
   .control-bar .thin-hide {

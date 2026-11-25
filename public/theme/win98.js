@@ -282,6 +282,48 @@
     `;
     document.body.appendChild(titlebar);
 
+    function openSidebarPage(id, title, props = {}) {
+      const bm = window.bluemap;
+      const menu = bm?.appState?.menu;
+      if (!menu) return;
+      menu.closeAll();
+      menu.openPage(id, title, props);
+    }
+
+    function takeCrtScreenshot() {
+      const bm = window.bluemap;
+      if (!bm) return;
+
+      // Capture directly from the WebGL CRT post-processing canvas when active
+      const dataUrl = crtFilterInstance?.captureDataURL?.("image/png");
+      if (!dataUrl) {
+        if (bm.__pp98OrigTakeScreenshot) {
+          bm.__pp98OrigTakeScreenshot();
+        }
+        return;
+      }
+
+      const link = document.createElement("a");
+      link.download = "bluemap-98-screenshot.png";
+      link.href = dataUrl;
+      link.click();
+
+      if (bm.appState?.screenshot?.clipboard && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+        fetch(dataUrl)
+          .then((r) => r.blob())
+          .then((blob) => navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]))
+          .catch(() => {});
+      }
+    }
+
+    function patchScreenshot() {
+      const bm = window.bluemap;
+      if (!bm || bm.__pp98ScreenshotPatched) return;
+      bm.__pp98ScreenshotPatched = true;
+      bm.__pp98OrigTakeScreenshot = bm.takeScreenshot?.bind(bm);
+      bm.takeScreenshot = takeCrtScreenshot;
+    }
+
     titlebar.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-act]");
       if (!btn) return;
@@ -291,7 +333,7 @@
         if (bm?.appState?.menu?.isOpen) {
           bm.appState.menu.closeAll();
         } else {
-          bm?.appState?.menu?.openPage?.("root", () => "Menu");
+          openSidebarPage("settings", "Settings");
         }
       } else if (act === "maximize") {
         if (document.fullscreenElement) {
@@ -304,7 +346,7 @@
       }
     });
 
-    // 3. Menu bar
+    // 3. Menu bar (native Win98 File / View / Maps / Help)
     const menubar = document.createElement("nav");
     menubar.className = "pp98-menubar";
     menubar.setAttribute("aria-label", "Application menu");
@@ -313,7 +355,6 @@
       { id: "file", label: "<u>F</u>ile" },
       { id: "view", label: "<u>V</u>iew" },
       { id: "maps", label: "<u>M</u>aps" },
-      { id: "tools", label: "<u>T</u>ools" },
       { id: "help", label: "<u>H</u>elp" },
     ];
 
@@ -361,9 +402,22 @@
       };
 
       if (menuId === "file") {
-        addItem("Save Screenshot (PNG)...", () => {
+        // All original BlueMap hamburger menu items consolidated into Win98 File menu
+        addItem("Maps...", () => openSidebarPage("maps", "Maps"));
+        addItem("Markers...", () => {
+          const markerSet = bm?.mapViewer?.markers?.data;
+          if (markerSet) openSidebarPage("markers", "Markers", { markerSet });
+        });
+        addItem("Settings...", () => openSidebarPage("settings", "Settings"));
+        addItem("Info...", () => openSidebarPage("info", "Info"));
+        addItem("Close Sidebar", () => bm?.appState?.menu?.closeAll?.(), {
+          disabled: !bm?.appState?.menu?.isOpen,
+        });
+        addSep();
+        addItem("Take Screenshot (PNG)...", () => {
+          patchScreenshot();
           bm?.takeScreenshot?.();
-          showToast("Saved bluemap-screenshot.png");
+          showToast(activeCrtPreset !== "off" ? "Saved CRT screenshot (PNG)" : "Saved screenshot (PNG)");
         });
         addItem("Copy Map Link", async () => {
           try {
@@ -373,20 +427,29 @@
             showToast("Could not access clipboard");
           }
         });
-        const liveEnabled = Boolean(bm?.settings?.enableLiveData);
-        addItem("Refresh Players & Markers", async () => {
-          await window.__pp98RefreshLive?.();
-          showToast("Checked players & markers");
-        }, { disabled: !liveEnabled });
-        addItem("Check for Updated Tiles", async () => {
+        addItem("Update Map", async () => {
           if (bm?.mapViewer?.map) {
             const root = bm.mapViewer.map.data.mapDataRoot;
             const m = await window.__pp98Manifest?.reload?.(root);
             const count = m ? Object.keys(m.tiles || {}).length : 0;
             await bm.switchMap(bm.mapViewer.map.data.id);
-            showToast(`Manifest synced (${count} updated tiles tracked)`);
+            showToast(`Map updated (${count} changed tiles tracked)`);
           }
         });
+        addItem("Reset Camera", () => bm?.resetCamera?.());
+        if (!isEmbedded()) {
+          addItem("Go Fullscreen", () => {
+            if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+            else document.documentElement.requestFullscreen?.().catch(() => {});
+          }, { checked: Boolean(document.fullscreenElement) });
+        }
+        const liveEnabled = Boolean(bm?.settings?.enableLiveData);
+        if (liveEnabled) {
+          addItem("Refresh Players & Markers", async () => {
+            await window.__pp98RefreshLive?.();
+            showToast("Checked players & markers");
+          });
+        }
         if (!isEmbedded()) {
           addSep();
           addItem("Return to Pants Place 98", () => {
@@ -399,19 +462,12 @@
         addItem("Flat (Top-Down)", () => bm?.setFlatView?.(), { bullet: state === "flat" });
         addItem("Free Flight", () => bm?.setFreeFlight?.(), { bullet: state === "free" });
         addSep();
-        addItem("Reset Camera", () => bm?.resetCamera?.());
         addItem("Toggle Day / Night", () => {
           const viewer = bm?.mapViewer;
           if (viewer?.data) {
             viewer.data.sunlight = viewer.data.sunlight < 0.5 ? 1 : 0.1;
           }
         });
-        if (!isEmbedded()) {
-          addItem("Fullscreen", () => {
-            if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-            else document.documentElement.requestFullscreen?.().catch(() => {});
-          }, { checked: Boolean(document.fullscreenElement) });
-        }
         addSep();
         addHeader("Color Scheme");
         const curScheme = getScheme();
@@ -434,17 +490,8 @@
             addItem(m.name || m.id, () => bm?.switchMap?.(m.id), { bullet: m.id === activeId });
           }
         }
-      } else if (menuId === "tools") {
-        addItem("Open Main Menu", () => bm?.appState?.menu?.openPage?.("root", () => "Menu"));
-        addItem("Maps List", () => bm?.appState?.menu?.openPage?.("maps", () => "Maps"));
-        addItem("Markers & Waypoints", () => bm?.appState?.menu?.openPage?.("markers", () => "Markers"));
-        addItem("Settings", () => bm?.appState?.menu?.openPage?.("settings", () => "Settings"));
-        addSep();
-        addItem("Close Sidebar", () => bm?.appState?.menu?.closeAll?.(), {
-          disabled: !bm?.appState?.menu?.isOpen,
-        });
       } else if (menuId === "help") {
-        addItem("Controls & Info", () => bm?.appState?.menu?.openPage?.("info", () => "Info"));
+        addItem("Controls & Info...", () => openSidebarPage("info", "Info"));
         addSep();
         addItem("About BlueMap 98...", showAboutModal);
       }
@@ -761,6 +808,7 @@
       }
     }
 
+    patchScreenshot();
     attachAdaptivePolling();
     updateStatus();
     setInterval(updateStatus, 500);

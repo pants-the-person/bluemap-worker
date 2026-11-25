@@ -394,6 +394,50 @@
       }
     }
 
+    renderSingleFrame() {
+      if (!this.supported || !this.sourceCanvas) return false;
+      if (this.sourceCanvas.width <= 0 || this.sourceCanvas.height <= 0) return false;
+
+      const gl = this.gl;
+      this.syncSize();
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        this.sourceCanvas,
+      );
+
+      gl.useProgram(this.program);
+      const u = this.uniforms;
+      const c = this.config;
+      gl.uniform2f(u.resolution, this.glcanvas.width, this.glcanvas.height);
+      gl.uniform1f(u.time, performance.now() * 0.001);
+      gl.uniform1f(u.barrel, c.barrelDistortion);
+      gl.uniform1f(u.curvature, c.curvature);
+      gl.uniform1f(u.aberration, c.chromaticAberration);
+      gl.uniform1f(u.noise, c.staticNoise);
+      gl.uniform1f(u.tearing, c.horizontalTearing);
+      gl.uniform1f(u.glow, c.glowBloom);
+      gl.uniform1f(u.jitter, c.verticalJitter);
+      gl.uniform1i(u.retrace, c.retraceLines ? 1 : 0);
+      gl.uniform1f(u.scanlineIntensity, c.scanlineIntensity);
+      gl.uniform1i(u.dotMask, c.dotMask ? 1 : 0);
+      gl.uniform1f(u.dotMaskIntensity, c.dotMaskIntensity);
+      gl.uniform1f(u.brightness, c.brightness);
+      gl.uniform1f(u.contrast, c.contrast);
+      gl.uniform1f(u.desaturation, c.desaturation);
+      gl.uniform1f(u.flicker, c.flicker);
+      gl.uniform1f(u.signalLoss, c.signalLoss);
+      gl.uniform1f(u.vignette, c.vignette);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      return true;
+    }
+
     renderCRT() {
       if (!this.running || !this.supported || !this.sourceCanvas) return;
       if (document.hidden) {
@@ -401,47 +445,15 @@
         return;
       }
 
-      const gl = this.gl;
-      if (this.sourceCanvas.width > 0 && this.sourceCanvas.height > 0) {
-        this.syncSize();
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.texture);
-        gl.texImage2D(
-          gl.TEXTURE_2D,
-          0,
-          gl.RGBA,
-          gl.RGBA,
-          gl.UNSIGNED_BYTE,
-          this.sourceCanvas,
-        );
-
-        gl.useProgram(this.program);
-        const u = this.uniforms;
-        const c = this.config;
-        gl.uniform2f(u.resolution, this.glcanvas.width, this.glcanvas.height);
-        gl.uniform1f(u.time, performance.now() * 0.001);
-        gl.uniform1f(u.barrel, c.barrelDistortion);
-        gl.uniform1f(u.curvature, c.curvature);
-        gl.uniform1f(u.aberration, c.chromaticAberration);
-        gl.uniform1f(u.noise, c.staticNoise);
-        gl.uniform1f(u.tearing, c.horizontalTearing);
-        gl.uniform1f(u.glow, c.glowBloom);
-        gl.uniform1f(u.jitter, c.verticalJitter);
-        gl.uniform1i(u.retrace, c.retraceLines ? 1 : 0);
-        gl.uniform1f(u.scanlineIntensity, c.scanlineIntensity);
-        gl.uniform1i(u.dotMask, c.dotMask ? 1 : 0);
-        gl.uniform1f(u.dotMaskIntensity, c.dotMaskIntensity);
-        gl.uniform1f(u.brightness, c.brightness);
-        gl.uniform1f(u.contrast, c.contrast);
-        gl.uniform1f(u.desaturation, c.desaturation);
-        gl.uniform1f(u.flicker, c.flicker);
-        gl.uniform1f(u.signalLoss, c.signalLoss);
-        gl.uniform1f(u.vignette, c.vignette);
-
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-      }
-
+      this.renderSingleFrame();
       this.animationFrameId = requestAnimationFrame(() => this.renderCRT());
+    }
+
+    captureDataURL(mimeType = "image/png") {
+      if (!this.running || !this.supported) return null;
+      if (!this.renderSingleFrame()) return null;
+      this.gl.finish();
+      return this.glcanvas.toDataURL(mimeType);
     }
 
     start() {
